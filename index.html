@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>拼豆电子图纸工具</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- ===== 顶栏 ===== -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <h1>🫧 拼豆图纸工具</h1>
+      </div>
+      <div class="topbar-center">
+        <div class="mode-toggle">
+          <button class="mode-btn active" data-mode="edit">✏️ 编辑模式</button>
+          <button class="mode-btn" data-mode="progress">✅ 进度模式</button>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <button id="btn-toggle-grid" class="tb-btn active" title="网格线 (G)">⊞ 网格</button>
+        <button id="btn-save" class="tb-btn" title="保存到浏览器">💾 保存</button>
+        <button id="btn-load" class="tb-btn" title="读取存档">📂 读取</button>
+        <button id="btn-export-png" class="tb-btn" title="导出为PNG图片">🖼️ PNG</button>
+        <button id="btn-export-xlsx" class="tb-btn" title="导出为Excel (含色号)">📊 Excel</button>
+      </div>
+    </header>
+
+    <!-- ===== 主体 ===== -->
+    <div class="main">
+      <!-- 侧边栏 -->
+      <aside class="sidebar">
+
+        <!-- 图片导入 -->
+        <section class="panel">
+          <h2>图片导入</h2>
+          <div id="drop-zone" class="drop-zone">
+            <p>📁 拖放图片到此处</p>
+            <p style="color:var(--text-muted)">或</p>
+            <button id="btn-select-file" type="button">选择图片</button>
+            <input type="file" id="file-input" accept="image/*" hidden>
+          </div>
+          <div id="image-preview" class="image-preview" style="display:none;">
+            <img id="preview-img" alt="预览">
+            <div class="image-info">
+              <span id="image-size"></span>
+              <button id="btn-remove-image" type="button">移除</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 像素化设置 -->
+        <section class="panel">
+          <h2>像素化设置</h2>
+          <div class="setting-row">
+            <label>图纸宽度</label>
+            <input type="number" id="grid-width" value="29" min="1" max="200">
+            <span>颗</span>
+          </div>
+          <div class="setting-row">
+            <label>图纸高度</label>
+            <input type="number" id="grid-height" value="29" min="1" max="200" disabled>
+            <span>颗</span>
+          </div>
+          <div class="setting-row">
+            <label class="checkbox-label">
+              <input type="checkbox" id="auto-height" checked>
+              自动计算高度
+            </label>
+          </div>
+          <div class="setting-row">
+            <label>颜色匹配</label>
+            <select id="match-method">
+              <option value="lab">精准匹配 (Lab色彩空间)</option>
+              <option value="rgb">快速匹配 (RGB加权)</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <label class="checkbox-label">
+              <input type="checkbox" id="dithering">
+              抖动处理 (Floyd-Steinberg)
+            </label>
+          </div>
+          <button id="btn-generate" class="btn-primary" type="button">⚡ 生成图纸</button>
+        </section>
+
+        <!-- 工具 -->
+        <section class="panel">
+          <h2>工具 <span style="font-weight:400;color:var(--text-muted);font-size:11px;text-transform:none">(B/I/E/F)</span></h2>
+          <div class="tool-grid">
+            <button class="tool-btn active" data-tool="paint" title="画笔 (B)">🖌</button>
+            <button class="tool-btn" data-tool="move" title="移动画布">✋</button>
+            <button class="tool-btn" data-tool="eyedropper" title="吸管 (I)">💧</button>
+            <button class="tool-btn" data-tool="eraser" title="橡皮 (E)">🧽</button>
+            <button class="tool-btn" data-tool="fill" title="填充 (F)">🪣</button>
+          </div>
+        </section>
+
+        <!-- 电子拼豆制作模式 -->
+        <section class="panel">
+          <h2>制作模式 <span class="panel-tag">电子拼豆</span></h2>
+          <label class="make-toggle">
+            <input type="checkbox" id="toggle-lock-filled">
+            <span>🔒 锁定已填充格子</span>
+          </label>
+          <label class="make-toggle">
+            <input type="checkbox" id="toggle-highlight-current">
+            <span>✨ 高亮当前颜色</span>
+          </label>
+          <p class="make-hint">锁定后已填充的格子不会被其他颜色覆盖；高亮会突出当前颜色的格子。</p>
+        </section>
+
+        <!-- 空白画布 (电子拼豆) -->
+        <section class="panel">
+          <h2>空白画布 <span class="panel-tag">电子拼豆</span></h2>
+          <div class="setting-row">
+            <label>宽度</label>
+            <input type="number" id="blank-width" value="32" min="1" max="200">
+            <span>颗</span>
+          </div>
+          <div class="setting-row">
+            <label>高度</label>
+            <input type="number" id="blank-height" value="32" min="1" max="200">
+            <span>颗</span>
+          </div>
+          <div class="size-chips" id="blank-size-chips">
+            <button type="button" data-w="16" data-h="16">16×16</button>
+            <button type="button" data-w="24" data-h="24">24×24</button>
+            <button type="button" data-w="32" data-h="32" class="active">32×32</button>
+            <button type="button" data-w="40" data-h="40">40×40</button>
+            <button type="button" data-w="48" data-h="48">48×48</button>
+            <button type="button" data-w="64" data-h="64">64×64</button>
+            <button type="button" data-custom="1">自定义</button>
+          </div>
+          <button id="btn-blank-canvas" class="btn-primary" type="button">生成空白画布</button>
+          <p class="make-hint">修改尺寸会清空当前画布（已完成的拼豆会丢失）。如需保留，请先点右上角 💾 保存。</p>
+        </section>
+
+        <!-- 参考图片 (制作参考) -->
+        <section class="panel">
+          <h2>参考图片 <span class="panel-tag">制作参考</span></h2>
+          <p class="panel-note">上传成品拼豆图片，照着它逐格完成电子拼豆。</p>
+          <button id="btn-ref-upload-side" type="button" class="btn-secondary" style="width:100%">📷 上传参考图片</button>
+          <div id="ref-status" class="ref-status">未上传参考图</div>
+        </section>
+
+        <!-- 进度操作 (仅进度模式显示) -->
+        <section class="panel" id="progress-actions" style="display:none;">
+          <h2>进度操作</h2>
+          <div class="progress-actions">
+            <button type="button" data-action="clear">清除进度</button>
+            <button type="button" data-action="complete">全部完成</button>
+          </div>
+        </section>
+
+        <!-- 拼豆颜色 / 色卡 -->
+        <section class="panel">
+          <h2>拼豆颜色 · Color Palette</h2>
+          <select id="palette-select" class="palette-select"></select>
+          <div id="palette-count" class="palette-count">—</div>
+          <input id="color-search" class="color-search" type="text" placeholder="搜索色号 / 名称 / HEX…">
+          <div id="series-filter" class="series-filter"></div>
+          <div id="color-list" class="color-list"></div>
+          <div id="selected-color-info" class="selected-color-info"></div>
+        </section>
+
+        <!-- 统计 -->
+        <section class="panel">
+          <h2>统计</h2>
+          <div class="stats">
+            <div class="stat-row">
+              <span>总颗数</span>
+              <span id="stat-total">0</span>
+            </div>
+            <div class="stat-row">
+              <span>颜色数</span>
+              <span id="stat-colors">0</span>
+            </div>
+            <div class="stat-row">
+              <span>已完成</span>
+              <span id="stat-done">0 / 0</span>
+            </div>
+            <div class="progress-bar">
+              <div id="progress-fill" class="progress-fill"></div>
+            </div>
+            <div id="progress-text" class="progress-text">0%</div>
+            <div id="stat-complete" class="stat-complete" style="display:none;"></div>
+          </div>
+          <div class="stat-row">
+            <span>剩余</span>
+            <span id="stat-remaining">0</span>
+          </div>
+          <div class="current-color-block">
+            <div class="cc-head">当前颜色 <span id="cc-id">—</span></div>
+            <div class="stat-row">
+              <span>已完成</span>
+              <span id="cc-done">0 / 0</span>
+            </div>
+            <div class="progress-bar">
+              <div id="cc-fill" class="progress-fill cc-fill"></div>
+            </div>
+            <div id="cc-text" class="progress-text">0%</div>
+          </div>
+          <div id="color-breakdown" class="color-breakdown"></div>
+        </section>
+
+      </aside>
+
+      <!-- 画布区域 -->
+      <main class="canvas-area">
+        <div class="canvas-toolbar">
+          <span class="info" id="grid-info">未加载图纸</span>
+          <span class="tb-sep"></span>
+          <div class="tb-group" title="工具">
+            <button class="tool-btn tb-tool active" data-tool="paint" title="填色 (点击格子填色)">🖌</button>
+            <button class="tool-btn tb-tool" data-tool="move" title="移动画布 (拖动平移 / 双指缩放)">✋</button>
+            <button class="tool-btn tb-tool" data-tool="eyedropper" title="吸色 (点击格子取色, 自动切回填色)">💧</button>
+          </div>
+          <span class="tb-sep"></span>
+          <div class="tb-zoom" title="缩放">
+            <button id="btn-zoom-out" title="缩小">−</button>
+            <span id="zoom-level">100%</span>
+            <button id="btn-zoom-in" title="放大">+</button>
+            <button id="btn-zoom-reset" title="恢复 100%">100%</button>
+            <button id="btn-fit" title="适应窗口">适应</button>
+          </div>
+          <span class="spacer"></span>
+          <button id="btn-toggle-reference" class="tb-btn" title="显示/隐藏参考图">🖼️ 隐藏参考图</button>
+          <span class="info hint">🖌填色 · ✋移动 · 💧吸色 · 滚轮/双指缩放 · 移动工具拖动平移</span>
+        </div>
+        <div class="workspace">
+          <!-- 参考图片 (左) -->
+          <div class="reference-pane hidden" id="reference-pane">
+            <div class="reference-toolbar">
+              <button id="ref-zoom-out" title="缩小">−</button>
+              <span id="ref-zoom-level">100%</span>
+              <button id="ref-zoom-in" title="放大">+</button>
+              <button id="ref-fit" title="适应窗口">适应</button>
+              <button id="ref-reset" title="恢复 100%">100%</button>
+              <span class="ref-spacer"></span>
+              <label class="ref-opacity-label">透明度
+                <input type="range" id="ref-opacity" min="0" max="100" value="100">
+                <span id="ref-opacity-val">100%</span>
+              </label>
+              <button id="ref-remove" title="移除参考图">✕</button>
+              <button id="ref-hide" title="隐藏参考图">⊟</button>
+            </div>
+            <div class="reference-viewport" id="reference-viewport">
+              <div class="reference-stage" id="reference-stage">
+                <img id="reference-img" alt="参考图片">
+              </div>
+              <div class="reference-placeholder" id="reference-placeholder">
+                <div class="icon">🖼️</div>
+                <p>上传一张成品拼豆图片作为制作参考</p>
+                <button id="btn-upload-reference" type="button" class="btn-primary">📷 上传参考图片</button>
+                <input type="file" id="reference-file-input" accept="image/*" hidden>
+              </div>
+            </div>
+          </div>
+          <!-- 分隔条: 拖动调整参考图 / 画布比例 -->
+          <div class="splitter hidden" id="splitter" title="拖动调整参考图与画布的比例"></div>
+          <!-- 电子拼豆画布 (右) -->
+          <div class="canvas-pane">
+            <div class="canvas-container">
+              <canvas id="grid-canvas"></canvas>
+              <div id="canvas-empty" class="canvas-empty">
+                <div class="icon">🫧</div>
+                <p>导入图片生成图纸，或新建空白图纸开始</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="canvas-toolbar">
+          <span class="info" id="coord-display"></span>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="js/bead-palette.js"></script>
+  <script src="data/palettes/mard-standard.js"></script>
+  <script src="data/palettes/mard-full.js"></script>
+  <script src="js/palettes.js"></script>
+  <script src="js/xlsx-export.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

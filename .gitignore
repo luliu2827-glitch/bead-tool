@@ -1,0 +1,14 @@
+# WorkBuddy internal project data (not part of the site)
+.workbuddy/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Stray / sample assets not used by the page
+sample-image.png
+nul
+
+# Local dev server / python artifacts
+__pycache__/
+*.pyc

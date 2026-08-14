@@ -102,15 +102,12 @@
         <!-- 电子拼豆制作模式 -->
         <section class="panel aux-panel">
           <h2>制作模式 <span class="panel-tag">电子拼豆</span></h2>
-          <label class="make-toggle">
-            <input type="checkbox" id="toggle-lock-filled">
-            <span>🔒 锁定已填充格子</span>
-          </label>
+          <button class="make-btn" id="toggle-lock-filled" title="一次性批量锁定：仅锁定当前已填且未锁定的格子；新填的格子不会自动锁定，再次点击才锁定新填的">🔒 锁定已填充</button>
           <label class="make-toggle">
             <input type="checkbox" id="toggle-highlight-current">
             <span>✨ 高亮当前颜色</span>
           </label>
-          <p class="make-hint">锁定后已填充的格子不会被其他颜色覆盖；高亮会突出当前颜色的格子。</p>
+          <p class="make-hint">点击「锁定已填充」只锁定当前已填的格子（逐格保护，读取/吸色不受影响）；新填格子不会自动锁定，需再次点击才锁定。高亮会突出当前颜色的格子。</p>
         </section>
 
         <!-- 空白画布 (电子拼豆) -->
@@ -236,7 +233,7 @@
           </div>
           <span class="tb-sep"></span>
           <div class="tb-group" title="制作模式">
-            <button id="btn-lock-toggle" class="tb-btn" title="锁定已填充格子 (保护已完成, 防止误改)">🔒 锁定</button>
+            <button id="btn-lock-toggle" class="tb-btn" title="锁定已填充格子 (一次性批量锁定当前已填且未锁定的格子)">🔒 锁定已填充</button>
             <button id="btn-highlight-toggle" class="tb-btn" title="高亮当前颜色 (突出目标格子)">✨ 高亮</button>
           </div>
           <span class="spacer"></span>

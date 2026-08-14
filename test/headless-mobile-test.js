@@ -210,7 +210,7 @@ function resetGrid(idx) {
   bt.undoStack = []; bt.redoStack = [];
   bt.createBlankGrid(8, 8, false);
   bt._strokeSnap = null; bt._strokeChanged = false;
-  bt.lockFilled = false; bt.highlightCurrent = false;
+  bt.highlightCurrent = false;
   bt.selectedColorIndex = (idx == null ? 2 : idx);
 }
 
@@ -252,16 +252,22 @@ bt.beginStroke(); bt.paintCell(3, 0); bt.endStroke();   // idx = 3
 eq('new edit cleared redo history', bt.redoStack.length, 0);
 
 // ===========================================================================
-console.log('\n=== (六) Lock-aware history (locked misclick -> NO undo entry) ===');
+console.log('\n=== (六) Per-cell lock: misclick on locked cell -> NO undo entry ===');
 resetGrid();
 bt.selectedColorIndex = 2;
 bt.beginStroke(); bt.paintCell(0, 0); bt.endStroke();
 eq('filled cells[0]=2 (unlocked)', bt.grid.cells[0], 2);
 eq('1 undo entry from fill', bt.undoStack.length, 1);
 
-bt.lockFilled = true;
+// lock that cell via the batch action (only locks currently-filled cells)
+bt.lockFilledCells();
+eq('lockFilledCells locked the filled cell', bt.grid.locks[0], 1);
+eq('lockFilledCells did NOT lock empty cells', bt.grid.locks[5], 0);
+eq('lockFilledCells pushed one undo entry (history-aware)', bt.undoStack.length, 2);
+
 const beforeLockHist = bt.undoStack.length;
 bt._lastLockToast = 0;
+bt.selectedColorIndex = 2;
 bt.beginStroke(); const rLockSame = bt.paintCell(0, 0); bt.endStroke();
 eq('locked paint (same color) returns false', rLockSame, false);
 eq('locked misclick did NOT add undo entry', bt.undoStack.length, beforeLockHist);
@@ -273,8 +279,37 @@ eq('locked paint (diff color) returns false', rLockDiff, false);
 eq('still no new undo entry', bt.undoStack.length, beforeLockHist);
 eq('locked cell still 2 (not overwritten to 5)', bt.grid.cells[0], 2);
 
+// undo of the lock *action* restores the pre-lock state (lock is reversible)
+bt.undo();
+eq('undo of lock-action unlocks the cell', bt.grid.locks[0], 0);
+eq('undo restores cell color (still 2)', bt.grid.cells[0], 2);
+
 // ===========================================================================
-console.log('\n=== (六) Eraser clears colorId AND done; eraser obeys lock ===');
+console.log('\n=== (三/四) Batch lock only locks filled; NEW fills stay unlocked ===');
+resetGrid();
+bt.selectedColorIndex = 2;
+bt.beginStroke(); bt.paintCell(0, 0); bt.endStroke();   // cells[0]=2
+bt.beginStroke(); bt.paintCell(1, 0); bt.endStroke();   // cells[1]=2
+bt.lockFilledCells();
+eq('first batch lock locks filled cells[0]', bt.grid.locks[0], 1);
+eq('first batch lock locks filled cells[1]', bt.grid.locks[1], 1);
+eq('empty cell NOT locked', bt.grid.locks[10], 0);
+
+// paint NEW cells AFTER lock -> they must NOT auto-lock
+bt.selectedColorIndex = 4;
+bt.beginStroke(); bt.paintCell(2, 0); bt.endStroke();   // cells[2]=4
+bt.beginStroke(); bt.paintCell(3, 0); bt.endStroke();   // cells[3]=4
+eq('newly filled cells[2] is NOT auto-locked', bt.grid.locks[2], 0);
+eq('newly filled cells[3] is NOT auto-locked', bt.grid.locks[3], 0);
+
+// second batch lock only locks the still-unlocked filled cells
+bt.lockFilledCells();
+eq('second batch lock now locks cells[2]', bt.grid.locks[2], 1);
+eq('second batch lock now locks cells[3]', bt.grid.locks[3], 1);
+eq('already-locked cells[0] stays locked', bt.grid.locks[0], 1);
+
+// ===========================================================================
+console.log('\n=== (六) Eraser clears colorId AND done; eraser obeys per-cell lock ===');
 resetGrid();
 bt.selectedColorIndex = 4;
 bt.beginStroke(); bt.paintCell(2, 2); bt.endStroke();        // cells[2,2]=4
@@ -287,11 +322,11 @@ eq('erase returns true', rErase, true);
 eq('erase cleared colorId (-1)', bt.grid.cells[2 * 8 + 2], -1);
 eq('erase cleared done flag (0)', bt.grid.done[2 * 8 + 2], 0);
 
-// eraser obeys lock
-bt.lockFilled = true;
+// eraser obeys per-cell lock
 bt.selectedColorIndex = 3;
 bt.beginStroke(); bt.paintCell(1, 1); bt.endStroke();        // allowed (was empty)
-eq('filled (1,1)=3 while locked (empty allowed)', bt.grid.cells[1 * 8 + 1], 3);
+eq('filled (1,1)=3 (unlocked)', bt.grid.cells[1 * 8 + 1], 3);
+bt.grid.locks[1 * 8 + 1] = 1;                                // lock it directly
 const beforeEraseLock = bt.undoStack.length;
 bt.beginStroke(); const rEraseLock = bt.eraseCell(1, 1); bt.endStroke();
 eq('erase on locked filled cell returns false', rEraseLock, false);
@@ -299,21 +334,42 @@ eq('locked cell NOT erased (still 3)', bt.grid.cells[1 * 8 + 1], 3);
 eq('erase-on-locked added no undo entry', bt.undoStack.length, beforeEraseLock);
 
 // ===========================================================================
-console.log('\n=== (六) Fill obeys lock ===');
+console.log('\n=== (六) Fill obeys per-cell lock (block start + protect during flood) ===');
 resetGrid();
-bt.lockFilled = true;
 bt.selectedColorIndex = 2;
 bt.beginStroke(); bt.paintCell(0, 0); bt.endStroke();        // cells[0]=2 (filled)
+bt.grid.locks[0] = 1;                                        // lock it
 bt.selectedColorIndex = 7;
 bt.beginStroke(); const rFillLocked = bt.fillCell(0, 0); bt.endStroke();
-eq('fill on locked filled target returns false', rFillLocked, false);
-eq('locked target unchanged', bt.grid.cells[0], 2);
+eq('fill started on locked filled cell returns false', rFillLocked, false);
+eq('locked start cell unchanged', bt.grid.cells[0], 2);
 
-// fill on EMPTY region allowed even when locked (lock only guards filled)
+// empty-region fill always allowed
 bt.selectedColorIndex = 9;
 bt.beginStroke(); const rFillEmpty = bt.fillCell(5, 5); bt.endStroke();
-ok('fill on empty region allowed while locked (returns true)', rFillEmpty === true);
+ok('fill on empty region allowed (returns true)', rFillEmpty === true);
 eq('empty cell (5,5) got fill color 9', bt.grid.cells[5 * 8 + 5], 9);
+
+// flood must NOT recolor a locked cell in its path
+resetGrid();
+bt.selectedColorIndex = 2;
+for (var fx = 0; fx < 8; fx++) { bt.beginStroke(); bt.paintCell(fx, 0); bt.endStroke(); }
+bt.grid.locks[4] = 1;                                        // lock middle of the strip
+bt.undoStack = []; bt.redoStack = [];                        // isolate this check
+bt.selectedColorIndex = 5;
+bt.beginStroke(); const rFlood = bt.fillCell(0, 0); bt.endStroke();
+eq('flood from (0,0) returns true', rFlood, true);
+eq('unlocked strip cells recolored to 5', bt.grid.cells[0], 5);
+eq('locked middle cell (4,0) stays 2 (protected)', bt.grid.cells[4], 2);
+
+// ===========================================================================
+console.log('\n=== (六) Eyedropper reads locked cells (read-only, allowed) ===');
+resetGrid();
+bt.selectedColorIndex = 6;
+bt.beginStroke(); bt.paintCell(3, 3); bt.endStroke();   // cells[3,3]=6
+bt.grid.locks[3 * 8 + 3] = 1;                            // lock it
+bt.eyedropCell(3, 3);
+eq('eyedropper (read) works on locked cell -> selects color 6', bt.selectedColorIndex, 6);
 
 // ===========================================================================
 console.log('\n=== (三/十五) Two-finger pinch = zoom + pan, NO cell mutation ===');
@@ -412,9 +468,19 @@ bt.toggleSidebar();
 ok('☰ toggle reopens sidebar', !mainEl.classList.contains('sb-collapsed'));
 
 bt._sbTouched = false;
-sandbox.matchMedia = function () { return { matches: true }; };
+sandbox.matchMedia = function (q) {
+  // simulate an iPad / touch device: the new query (max-width:1024px),(pointer:coarse) matches
+  return { matches: /pointer:\s*coarse/.test(q) || /max-width:\s*1024px/.test(q) };
+};
 bt.maybeAutoCollapseSidebar();
-ok('auto-collapse triggers on mobile viewport', mainEl.classList.contains('sb-collapsed'));
+ok('auto-collapse triggers on mobile (touch/coarse) viewport', mainEl.classList.contains('sb-collapsed'));
+
+// desktop (fine pointer, wide) must NOT auto-collapse
+bt._sbTouched = false;
+mainEl.classList.remove('sb-collapsed');
+sandbox.matchMedia = function () { return { matches: false }; };
+bt.maybeAutoCollapseSidebar();
+ok('desktop viewport does NOT auto-collapse', !mainEl.classList.contains('sb-collapsed'));
 sandbox.matchMedia = undefined;
 
 // ===========================================================================
@@ -431,16 +497,18 @@ bt.beginStroke(); bt.paintCell(4, 4); bt.endStroke();
 eq('paint with highlight on works (cells set)', bt.grid.cells[4 * 8 + 4], 0);
 bt.highlightCurrent = false;
 
-bt.lockFilled = true;
+// per-cell lock: lock a filled cell, ensure empty is paintable & filled is protected
 bt.selectedColorIndex = 1;
-bt.beginStroke(); const rEmptyLock = bt.paintCell(6, 6); bt.endStroke();
-eq('empty cell paintable while locked', rEmptyLock, true);
-eq('empty cell (6,6)=1', bt.grid.cells[6 * 8 + 6], 1);
+bt.beginStroke(); bt.paintCell(6, 6); bt.endStroke();   // cells[6,6]=1
+bt.grid.locks[6 * 8 + 6] = 1;                            // lock it (per-cell)
 bt.selectedColorIndex = 8;
-bt.beginStroke(); const rFilledLock = bt.paintCell(6, 6); bt.endStroke();
-eq('filled cell protected by lock (returns false)', rFilledLock, false);
-eq('filled cell (6,6) stays 1', bt.grid.cells[6 * 8 + 6], 1);
-bt.lockFilled = false;
+const rFilledLock = bt.paintCell(6, 6);
+eq('filled locked cell protected (returns false)', rFilledLock, false);
+eq('filled locked cell (6,6) stays 1', bt.grid.cells[6 * 8 + 6], 1);
+// empty cell still paintable (lock is per-cell, NOT a global mode)
+bt.selectedColorIndex = 8;
+const rEmpty = bt.paintCell(7, 7);
+eq('empty cell paintable even though another cell is locked', rEmpty, true);
 
 // ===========================================================================
 console.log('\n=== (十六#22) Desktop mouse handlers still bound ===');

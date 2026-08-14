@@ -138,7 +138,7 @@
     this.dragStartButton = -1;
 
     // 电子拼豆制作模式
-    this.lockFilled = false;       // 锁定已填充格子 (开启后不能覆盖/擦除已填充格子)
+    // 锁定已填充: 逐格状态保存在 grid.locks (Uint8Array, 0/1), 通过 lockFilledCells() 一次性批量锁定, 非持续模式
     this.highlightCurrent = false; // 高亮当前颜色 (突出当前色号的目标格子)
     this.animCells = {};           // 落子动画: idx -> 起始时间戳
     this._animRAF = null;
@@ -484,13 +484,9 @@
   // ========== 制作模式开关 (顶部工具栏 + 侧栏同步) ==========
 
   BeadTool.prototype.updateMakeToggles = function () {
-    var lb = document.getElementById('btn-lock-toggle');
     var hb = document.getElementById('btn-highlight-toggle');
-    var lc = document.getElementById('toggle-lock-filled');
     var hc = document.getElementById('toggle-highlight-current');
-    if (lb) lb.classList.toggle('on', this.lockFilled);
     if (hb) hb.classList.toggle('on', this.highlightCurrent);
-    if (lc) lc.checked = this.lockFilled;
     if (hc) hc.checked = this.highlightCurrent;
   };
 
@@ -499,7 +495,7 @@
   BeadTool.prototype.maybeAutoCollapseSidebar = function () {
     if (this._sbTouched) return;
     var m = (typeof window !== 'undefined' && window.matchMedia)
-      ? window.matchMedia('(max-width: 820px)') : null;
+      ? window.matchMedia('(max-width: 1024px), (pointer: coarse)') : null;
     if (m && m.matches) {
       var main = document.querySelector('.main');
       if (main) main.classList.add('sb-collapsed');
@@ -523,11 +519,42 @@
       self.beginStroke();
       self.grid.cells.fill(-1);
       self.grid.done.fill(0);
+      self.grid.locks.fill(0);
       self.endStroke();
       self.renderGrid();
       self.updateStats();
       self.toast('画布已清空', 'success');
     });
+  };
+
+  // ========== 锁定已填充 (一次性批量操作, 非持续模式) ==========
+
+  // 点击「锁定已填充」: 仅把当前「已填色且尚未锁定」的格子锁定。
+  // 空白格子不锁定; 已锁定的保持锁定; 之后新填的格子不会自动锁定。
+  // 再次点击才进行下一次批量锁定。锁定作为一次笔画进入撤销历史。
+  BeadTool.prototype.lockFilledCells = function () {
+    if (!this.grid) { this.toast('没有可锁定的画布', 'warning'); return; }
+    this.beginStroke();
+    var n = 0;
+    for (var i = 0; i < this.grid.cells.length; i++) {
+      if (this.grid.cells[i] >= 0 && this.grid.locks[i] === 0) {
+        this.grid.locks[i] = 1;
+        this._strokeChanged = true;
+        n++;
+      }
+    }
+    this.endStroke();
+    this.renderGrid();
+    var lb = document.getElementById('btn-lock-toggle');
+    if (n > 0) {
+      this.toast('已锁定 ' + n + ' 个已填格子（新填的格子不会自动锁定，再次点击可锁定新填的）', 'success');
+      if (lb) {
+        lb.classList.add('on');
+        setTimeout(function () { if (lb) lb.classList.remove('on'); }, 700);
+      }
+    } else {
+      this.toast('没有新的可锁定格子（已填的都锁过了）', 'info');
+    }
   };
 
   // ========== 工具选择 ==========
@@ -636,12 +663,10 @@
     });
 
     // --- 电子拼豆制作模式开关 ---
+    // 「锁定已填充」是一次性批量操作 (见 lockFilledCells), 不再是持续模式
     var lockEl = document.getElementById('toggle-lock-filled');
-    if (lockEl) lockEl.addEventListener('change', function () {
-      self.lockFilled = this.checked;
-      self.updateMakeToggles();
-      self.renderGrid();
-      self.toast(this.checked ? '已开启：锁定已填充格子' : '已关闭：锁定已填充格子', this.checked ? 'success' : '');
+    if (lockEl) lockEl.addEventListener('click', function () {
+      self.lockFilledCells();
     });
     var hlEl = document.getElementById('toggle-highlight-current');
     if (hlEl) hlEl.addEventListener('change', function () {
@@ -718,12 +743,10 @@
     if (redoBtn) redoBtn.addEventListener('click', function () { self.redo(); });
 
     // --- 制作模式开关 (顶部工具栏) ---
+    // 「锁定已填充」为一次性批量锁定动作
     var lockBtn = document.getElementById('btn-lock-toggle');
     if (lockBtn) lockBtn.addEventListener('click', function () {
-      self.lockFilled = !self.lockFilled;
-      self.updateMakeToggles();
-      self.renderGrid();
-      self.toast(self.lockFilled ? '已开启：锁定已填充格子' : '已关闭：锁定已填充格子', self.lockFilled ? 'success' : '');
+      self.lockFilledCells();
     });
     var hlBtn = document.getElementById('btn-highlight-toggle');
     if (hlBtn) hlBtn.addEventListener('click', function () {
@@ -1308,7 +1331,8 @@
       self.grid = {
         width: w, height: h,
         cells: cells,
-        done: new Uint8Array(total)
+        done: new Uint8Array(total),
+        locks: new Uint8Array(total)
       };
       self.undoStack = [];
       self.redoStack = [];
@@ -1396,7 +1420,7 @@
     var self = this;
     var doCreate = function () {
       var total = w * h;
-      self.grid = { width: w, height: h, cells: new Int16Array(total).fill(-1), done: new Uint8Array(total) };
+      self.grid = { width: w, height: h, cells: new Int16Array(total).fill(-1), done: new Uint8Array(total), locks: new Uint8Array(total) };
       self.undoStack = [];
       self.redoStack = [];
       self.baseCellSize = self.calcCellSize(w, h);
@@ -1687,8 +1711,8 @@
             }
           }
 
-          // 锁定已填充格子: 显示锁定标记 (虚线边框 + 🔒), 让用户明确知道该格受保护
-          if (this.lockFilled) {
+          // 锁定格子 (逐格): 显示锁定标记 (虚线边框 + 🔒), 让用户明确知道该格受保护
+          if (this.grid.locks[idx] === 1) {
             ctx.strokeStyle = 'rgba(0,0,0,0.5)';
             ctx.lineWidth = Math.max(1, cs * 0.06);
             ctx.setLineDash([Math.max(2, cs * 0.18), Math.max(2, cs * 0.18)]);
@@ -1826,8 +1850,8 @@
   BeadTool.prototype.paintCell = function (x, y) {
     var idx = y * this.grid.width + x;
     var cur = this.grid.cells[idx];
-    // 锁定已填充格子: 已有颜色的格子不可被其他颜色覆盖
-    if (this.lockFilled && cur >= 0) { this.notifyLocked(); return false; }
+    // 锁定格子 (逐格): 已锁定的格子不可被覆盖
+    if (this.grid.locks[idx] === 1) { this.notifyLocked(); return false; }
     if (cur !== this.selectedColorIndex) {
       this._strokeChanged = true;
       this.grid.cells[idx] = this.selectedColorIndex;
@@ -1841,8 +1865,8 @@
 
   BeadTool.prototype.eraseCell = function (x, y) {
     var idx = y * this.grid.width + x;
-    // 锁定已填充格子: 不能擦除已填充的格子
-    if (this.lockFilled && this.grid.cells[idx] >= 0) { this.notifyLocked(); return false; }
+    // 锁定格子 (逐格): 不能擦除锁定的格子
+    if (this.grid.locks[idx] === 1) { this.notifyLocked(); return false; }
     if (this.grid.cells[idx] !== -1) {
       this._strokeChanged = true;
       this.grid.cells[idx] = -1; this.grid.done[idx] = 0;
@@ -1870,8 +1894,8 @@
     var startIdx = startY * gw + startX;
     var targetColor = this.grid.cells[startIdx];
     var fillColor = this.selectedColorIndex;
-    // 锁定已填充格子: 只能填充空白区域, 不能覆盖已填充格子
-    if (this.lockFilled && targetColor !== -1) { this.notifyLocked(); return false; }
+    // 锁定格子 (逐格): 不能从锁定的格子发起填充, 也不能在填充过程中改写锁定的格子
+    if (this.grid.locks[startIdx] === 1) { this.notifyLocked(); return false; }
     if (targetColor === fillColor) return false;
     var stack = [[startX, startY]];
     var visited = new Uint8Array(gw * gh);
@@ -1882,6 +1906,7 @@
       if (px < 0 || px >= gw || py < 0 || py >= gh) continue;
       var idx = py * gw + px;
       if (visited[idx]) continue;
+      if (this.grid.locks[idx] === 1) { visited[idx] = 1; continue; } // 锁定格视为墙, 不改写不扩散
       if (this.grid.cells[idx] !== targetColor) continue;
       visited[idx] = 1;
       this.grid.cells[idx] = fillColor;
@@ -1931,7 +1956,8 @@
     if (!this.grid) return;
     this._strokeSnap = {
       cells: new Int16Array(this.grid.cells),
-      done: new Uint8Array(this.grid.done)
+      done: new Uint8Array(this.grid.done),
+      locks: new Uint8Array(this.grid.locks)
     };
     this._strokeChanged = false;
   };
@@ -1953,7 +1979,8 @@
     if (!this.grid) return;
     this.undoStack.push({
       cells: new Int16Array(this.grid.cells),
-      done: new Uint8Array(this.grid.done)
+      done: new Uint8Array(this.grid.done),
+      locks: new Uint8Array(this.grid.locks)
     });
     if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
     this.redoStack = [];
@@ -1965,11 +1992,13 @@
     // 当前状态存入重做栈, 便于之后重做
     this.redoStack.push({
       cells: new Int16Array(this.grid.cells),
-      done: new Uint8Array(this.grid.done)
+      done: new Uint8Array(this.grid.done),
+      locks: new Uint8Array(this.grid.locks)
     });
     var snap = this.undoStack.pop();
     this.grid.cells = snap.cells;
     this.grid.done = snap.done;
+    this.grid.locks = snap.locks;
     this.renderGrid(); this.updateStats();
     this.updateUndoRedoButtons();
     this.toast('已撤销');
@@ -1979,12 +2008,14 @@
     if (!this.grid || this.redoStack.length === 0) { this.toast('没有可重做的操作', 'warning'); return; }
     this.undoStack.push({
       cells: new Int16Array(this.grid.cells),
-      done: new Uint8Array(this.grid.done)
+      done: new Uint8Array(this.grid.done),
+      locks: new Uint8Array(this.grid.locks)
     });
     if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
     var snap = this.redoStack.pop();
     this.grid.cells = snap.cells;
     this.grid.done = snap.done;
+    this.grid.locks = snap.locks;
     this.renderGrid(); this.updateStats();
     this.updateUndoRedoButtons();
     this.toast('已重做');
@@ -2202,6 +2233,7 @@
       height: this.grid.height,
       cells: Array.from(this.grid.cells),
       done: Array.from(this.grid.done),
+      locks: Array.from(this.grid.locks),
       paletteId: this.paletteId,
       referenceDataUrl: this.referenceDataUrl,
       refOpacity: this.refOpacity,
@@ -2245,7 +2277,8 @@
         width: data.width,
         height: data.height,
         cells: Int16Array.from(data.cells),
-        done: Uint8Array.from(data.done)
+        done: Uint8Array.from(data.done),
+        locks: data.locks ? Uint8Array.from(data.locks) : new Uint8Array(data.width * data.height)
       };
       self.undoStack = [];
       self.redoStack = [];

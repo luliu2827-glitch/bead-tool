@@ -156,9 +156,17 @@
     this.refLastX = 0;
     this.refLastY = 0;
 
-    // 撤销栈
+    // 撤销 / 重做
     this.undoStack = [];
+    this.redoStack = [];
     this.maxUndo = 30;
+    // 一次连续操作 (一次点击 / 一次拖动笔画) 的快照状态
+    this._strokeSnap = null;
+    this._strokeChanged = false;
+    this._lastLockToast = 0;   // 锁定提示节流时间戳
+    this._sbTouched = false;    // 用户是否手动开关过侧栏 (避免反复自动收起)
+    this._touchCount = 0;       // 当前屏幕上的手指数量
+    this._multiTouch = false;    // 本次手势是否曾出现多指 (防止多指后误触填色)
 
     // 画布平移 / 缩放 (视图变换)
     this.panX = 0;            // 画布左上角相对容器左上角的平移 (px)
@@ -172,6 +180,9 @@
     this.isPinching = false;
     this.pinchStartDist = 0; this.pinchBaseSize = 0;
     this.pinchMidX = 0; this.pinchMidY = 0;
+    // 双指平移: 记录手势起点处画面内容坐标, 使捏合 + 拖动同时生效
+    this.pinchStartMidX = 0; this.pinchStartMidY = 0;
+    this.pinchContentX = 0; this.pinchContentY = 0;
     this.touchMoved = false;
     this.touchStartX = 0; this.touchStartY = 0;
     this._suppressMouseUntil = 0;
@@ -230,6 +241,7 @@
     this.renderSeriesFilter();
     this.renderColorList();
     this.updateSelectedColorInfo();
+    this.renderMobilePalette();
 
     try { localStorage.setItem('bead-palette-id', paletteId); } catch (e) {}
   };
@@ -341,6 +353,8 @@
 
     // 更新 UI
     this.updateRefToggleLabel();
+    this.updateMakeToggles();
+    this.updateUndoRedoButtons();
     this.updateUI();
   };
 
@@ -424,6 +438,7 @@
     });
     this.updateSelectedColorInfo();
     this.updateCurrentColorStats();
+    this.updateMobilePaletteSelection();
     if (this.highlightCurrent) this.renderGrid();
     // 选了颜色自动切到画笔
     if (this.tool === 'eraser') this.selectTool('paint');
@@ -437,6 +452,82 @@
       '<div class="swatch" style="background:' + c.hex + '"></div>' +
       '<span class="name">MARD ' + c.id + ' · ' + colorName(c) + '</span>' +
       '<span class="code">' + c.hex.toUpperCase() + '</span>';
+  };
+
+  // ========== 移动端: 底部 MARD 色卡条 ==========
+
+  BeadTool.prototype.renderMobilePalette = function () {
+    var bar = document.getElementById('mobile-palette-bar');
+    if (!bar) return;
+    var self = this;
+    bar.innerHTML = '';
+    this.palette.forEach(function (c, i) {
+      var sw = document.createElement('div');
+      sw.className = 'mp-swatch' + (i === self.selectedColorIndex ? ' selected' : '');
+      sw.style.background = c.hex;
+      sw.title = 'MARD ' + c.id + ' ' + colorName(c);
+      sw.dataset.index = i;
+      sw.addEventListener('click', function () { self.selectColor(i); });
+      bar.appendChild(sw);
+    });
+  };
+
+  BeadTool.prototype.updateMobilePaletteSelection = function () {
+    var bar = document.getElementById('mobile-palette-bar');
+    if (!bar) return;
+    var self = this;
+    bar.querySelectorAll('.mp-swatch').forEach(function (el) {
+      el.classList.toggle('selected', parseInt(el.dataset.index, 10) === self.selectedColorIndex);
+    });
+  };
+
+  // ========== 制作模式开关 (顶部工具栏 + 侧栏同步) ==========
+
+  BeadTool.prototype.updateMakeToggles = function () {
+    var lb = document.getElementById('btn-lock-toggle');
+    var hb = document.getElementById('btn-highlight-toggle');
+    var lc = document.getElementById('toggle-lock-filled');
+    var hc = document.getElementById('toggle-highlight-current');
+    if (lb) lb.classList.toggle('on', this.lockFilled);
+    if (hb) hb.classList.toggle('on', this.highlightCurrent);
+    if (lc) lc.checked = this.lockFilled;
+    if (hc) hc.checked = this.highlightCurrent;
+  };
+
+  // ========== 侧栏 (移动端抽屉) ==========
+
+  BeadTool.prototype.maybeAutoCollapseSidebar = function () {
+    if (this._sbTouched) return;
+    var m = (typeof window !== 'undefined' && window.matchMedia)
+      ? window.matchMedia('(max-width: 820px)') : null;
+    if (m && m.matches) {
+      var main = document.querySelector('.main');
+      if (main) main.classList.add('sb-collapsed');
+      this._sbTouched = true;  // 仅自动收起一次, 之后由用户手动控制
+    }
+  };
+
+  BeadTool.prototype.toggleSidebar = function () {
+    var main = document.querySelector('.main');
+    if (!main) return;
+    main.classList.toggle('sb-collapsed');
+    this._sbTouched = true;  // 用户已手动操作, 不再自动收起
+  };
+
+  // ========== 清空画布 (🗑) ==========
+
+  BeadTool.prototype.clearCanvas = function () {
+    if (!this.grid) { this.toast('没有可清空的画布', 'warning'); return; }
+    var self = this;
+    this.confirmDialog('清空整个画布？格子内容会被清空（保留尺寸），可撤销。', function () {
+      self.beginStroke();
+      self.grid.cells.fill(-1);
+      self.grid.done.fill(0);
+      self.endStroke();
+      self.renderGrid();
+      self.updateStats();
+      self.toast('画布已清空', 'success');
+    });
   };
 
   // ========== 工具选择 ==========
@@ -548,12 +639,14 @@
     var lockEl = document.getElementById('toggle-lock-filled');
     if (lockEl) lockEl.addEventListener('change', function () {
       self.lockFilled = this.checked;
+      self.updateMakeToggles();
       self.renderGrid();
       self.toast(this.checked ? '已开启：锁定已填充格子' : '已关闭：锁定已填充格子', this.checked ? 'success' : '');
     });
     var hlEl = document.getElementById('toggle-highlight-current');
     if (hlEl) hlEl.addEventListener('change', function () {
       self.highlightCurrent = this.checked;
+      self.updateMakeToggles();
       self.renderGrid();
       self.updateCurrentColorStats();
       self.toast(this.checked ? '已开启：高亮当前颜色' : '已关闭：高亮当前颜色', this.checked ? 'success' : '');
@@ -618,6 +711,37 @@
       self.exportXLSX();
     });
 
+    // --- 撤销 / 重做 ---
+    var undoBtn = document.getElementById('btn-undo');
+    if (undoBtn) undoBtn.addEventListener('click', function () { self.undo(); });
+    var redoBtn = document.getElementById('btn-redo');
+    if (redoBtn) redoBtn.addEventListener('click', function () { self.redo(); });
+
+    // --- 制作模式开关 (顶部工具栏) ---
+    var lockBtn = document.getElementById('btn-lock-toggle');
+    if (lockBtn) lockBtn.addEventListener('click', function () {
+      self.lockFilled = !self.lockFilled;
+      self.updateMakeToggles();
+      self.renderGrid();
+      self.toast(self.lockFilled ? '已开启：锁定已填充格子' : '已关闭：锁定已填充格子', self.lockFilled ? 'success' : '');
+    });
+    var hlBtn = document.getElementById('btn-highlight-toggle');
+    if (hlBtn) hlBtn.addEventListener('click', function () {
+      self.highlightCurrent = !self.highlightCurrent;
+      self.updateMakeToggles();
+      self.renderGrid();
+      self.updateCurrentColorStats();
+      self.toast(self.highlightCurrent ? '已开启：高亮当前颜色' : '已关闭：高亮当前颜色', self.highlightCurrent ? 'success' : '');
+    });
+
+    // --- 清空画布 (🗑) ---
+    var clearBtn = document.getElementById('btn-clear-canvas');
+    if (clearBtn) clearBtn.addEventListener('click', function () { self.clearCanvas(); });
+
+    // --- 移动端侧栏开关 (☰) ---
+    var sbBtn = document.getElementById('btn-toggle-sidebar');
+    if (sbBtn) sbBtn.addEventListener('click', function () { self.toggleSidebar(); });
+
     // --- Canvas 交互 ---
     this.canvas.addEventListener('mousedown', function (e) { self.handleMouseDown(e); });
     this.canvas.addEventListener('mousemove', function (e) { self.handleMouseMove(e); });
@@ -645,36 +769,55 @@
       e.preventDefault();
       self._touchActive = true;
       self._suppressMouseUntil = Date.now() + 700;
+      self._touchCount = e.touches.length;
+      if (e.touches.length >= 2) self._multiTouch = true;
       if (e.touches.length === 2) {
-        self.isPanning = false; self.isDragging = false; self.isPinching = true;
+        self.isPanning = false; self.isDragging = false; self.isPinching = true; self.touchMoved = true;
         var dx = e.touches[0].clientX - e.touches[1].clientX;
         var dy = e.touches[0].clientY - e.touches[1].clientY;
         self.pinchStartDist = Math.hypot(dx, dy) || 1;
         self.pinchBaseSize = self.cellSize;
         var crect = self.canvas.parentNode.getBoundingClientRect();
-        self.pinchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - crect.left;
-        self.pinchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - crect.top;
+        self.pinchStartMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - crect.left;
+        self.pinchStartMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - crect.top;
+        // 记录手势起点处的画布内容坐标, 使双指捏合缩放 + 双指拖动平移同时生效
+        self.pinchContentX = (self.pinchStartMidX - self.panX) / self.pinchBaseSize;
+        self.pinchContentY = (self.pinchStartMidY - self.panY) / self.pinchBaseSize;
         return;
       }
       var t = e.touches[0];
       self.touchStartX = t.clientX; self.touchStartY = t.clientY; self.touchMoved = false;
+      if (self._multiTouch) return;  // 多指手势残留, 不启动单指绘制
       if (self.tool === 'move') {
         self.isPanning = true;
         self.panStartX = t.clientX; self.panStartY = t.clientY;
         self.panOriginX = self.panX; self.panOriginY = self.panY;
       } else if (self.tool === 'paint' || self.tool === 'eraser') {
         self.isDragging = true; self.dragStartButton = 0; self.lastPaintedIdx = -1;
+        self.beginStroke();  // 一次笔画开始 (可能是单击或拖动)
       }
     }, { passive: false });
 
     this.canvas.addEventListener('touchmove', function (e) {
       e.preventDefault();
+      self._touchCount = e.touches.length;
       if (self.isPinching && e.touches.length >= 2) {
         var dx = e.touches[0].clientX - e.touches[1].clientX;
         var dy = e.touches[0].clientY - e.touches[1].clientY;
         var dist = Math.hypot(dx, dy) || 1;
         var newSize = Math.max(2, Math.min(60, self.pinchBaseSize * (dist / self.pinchStartDist)));
-        self.zoomToSize(newSize, self.pinchMidX, self.pinchMidY);
+        // 双指中点 (容器坐标)
+        var crect = self.canvas.parentNode.getBoundingClientRect();
+        var midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - crect.left;
+        var midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - crect.top;
+        // 双指捏合缩放 + 双指拖动平移 (同步生效), 不修改任何格子
+        self.cellSize = newSize;
+        self.panX = midX - self.pinchContentX * newSize;
+        self.panY = midY - self.pinchContentY * newSize;
+        self.setupCanvas();
+        self.clampPan();
+        self.applyCanvasTransform();
+        self.updateZoomLabel();
         return;
       }
       if (self.isPanning) {
@@ -684,7 +827,7 @@
         self.clampPan(); self.applyCanvasTransform();
         return;
       }
-      if (e.touches.length === 1) {
+      if (e.touches.length === 1 && !self._multiTouch) {
         var t2 = e.touches[0];
         if (Math.abs(t2.clientX - self.touchStartX) > 6 || Math.abs(t2.clientY - self.touchStartY) > 6) {
           self.touchMoved = true;
@@ -704,27 +847,30 @@
 
     this.canvas.addEventListener('touchend', function (e) {
       e.preventDefault();
+      self._touchCount = e.touches.length;
       if (self.isPinching) {
-        if (e.touches.length < 2) self.isPinching = false; else return;
+        if (e.touches.length < 2) { self.isPinching = false; self.touchMoved = true; } else return;
       }
       if (self.isPanning) self.isPanning = false;
       if (self.isDragging && (self.tool === 'paint' || self.tool === 'eraser')) {
         self.isDragging = false; self.lastPaintedIdx = -1; self.dragStartButton = -1;
+        self.endStroke();
       }
-      // 未移动的单击: 在非移动工具下执行对应动作
-      if (!self.touchMoved && self.tool !== 'move' && e.changedTouches.length >= 1) {
+      // 未移动的单击: 在非移动工具下执行对应动作 (多指残留时不触发)
+      if (!self.touchMoved && self.tool !== 'move' && e.changedTouches.length >= 1 && !self._multiTouch) {
         var t = e.changedTouches[0];
         var cell = self.getCellFromClient(t.clientX, t.clientY);
         if (cell) {
           if (self.tool === 'eyedropper') self.eyedropCell(cell.x, cell.y);
-          else if (self.tool === 'fill') { self.pushUndo(); self.fillCell(cell.x, cell.y); }
-          else if (self.tool === 'paint') { self.pushUndo(); self.paintCell(cell.x, cell.y); }
-          else if (self.tool === 'eraser') { self.pushUndo(); self.eraseCell(cell.x, cell.y); }
+          else if (self.tool === 'fill') { self.beginStroke(); self.fillCell(cell.x, cell.y); self.endStroke(); }
+          else if (self.tool === 'paint') { self.beginStroke(); self.paintCell(cell.x, cell.y); self.endStroke(); }
+          else if (self.tool === 'eraser') { self.beginStroke(); self.eraseCell(cell.x, cell.y); self.endStroke(); }
         }
       }
       self.touchMoved = false;
       self._touchActive = false;
       self._suppressMouseUntil = Date.now() + 700;
+      if (self._touchCount === 0) self._multiTouch = false;
     }, { passive: false });
     this.canvas.addEventListener('touchcancel', function () {
       self.isPanning = false; self.isDragging = false; self.isPinching = false; self.touchMoved = false;
@@ -906,6 +1052,9 @@
           break;
         case 'z':
           if (e.ctrlKey || e.metaKey) { e.preventDefault(); self.undo(); }
+          break;
+        case 'y':
+          if (e.ctrlKey || e.metaKey) { e.preventDefault(); self.redo(); }
           break;
         case '1':
         case '2':
@@ -1162,8 +1311,11 @@
         done: new Uint8Array(total)
       };
       self.undoStack = [];
+      self.redoStack = [];
       self.baseCellSize = self.calcCellSize(w, h);
       self.fitCanvas();
+      self.maybeAutoCollapseSidebar();
+      self.updateUndoRedoButtons();
       self.updateStats();
       self.hideLoading();
       self.toast('图纸已生成: ' + w + 'x' + h + ' (' + total + '颗) · 色卡: ' + self.paletteMeta.name, 'success');
@@ -1246,8 +1398,11 @@
       var total = w * h;
       self.grid = { width: w, height: h, cells: new Int16Array(total).fill(-1), done: new Uint8Array(total) };
       self.undoStack = [];
+      self.redoStack = [];
       self.baseCellSize = self.calcCellSize(w, h);
       self.fitCanvas();
+      self.maybeAutoCollapseSidebar();
+      self.updateUndoRedoButtons();
       self.updateStats();
       self.toast('空白画布已创建: ' + w + 'x' + h, 'success');
     };
@@ -1531,6 +1686,21 @@
               ctx.fillRect(px, py, cs, cs);
             }
           }
+
+          // 锁定已填充格子: 显示锁定标记 (虚线边框 + 🔒), 让用户明确知道该格受保护
+          if (this.lockFilled) {
+            ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+            ctx.lineWidth = Math.max(1, cs * 0.06);
+            ctx.setLineDash([Math.max(2, cs * 0.18), Math.max(2, cs * 0.18)]);
+            ctx.strokeRect(px + ctx.lineWidth / 2, py + ctx.lineWidth / 2, cs - ctx.lineWidth, cs - ctx.lineWidth);
+            ctx.setLineDash([]);
+            var lsize = Math.max(8, Math.floor(cs * 0.42));
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.font = 'bold ' + lsize + 'px -apple-system, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText('🔒', px + 1, py + 1);
+          }
         } else {
           var isLight = (x + y) % 2 === 0;
           ctx.fillStyle = isLight ? '#f8f8fa' : '#ececf0';
@@ -1595,13 +1765,13 @@
     this.isDragging = true;
     this.dragStartButton = e.button;
     this.lastPaintedIdx = -1;
-    if (this.mode === 'progress') { this.toggleProgress(cell.x, cell.y); return; }
+    if (this.mode === 'progress') { this.beginStroke(); this.toggleProgress(cell.x, cell.y); this.endStroke(); return; }
     if (e.button === 0) {
       switch (this.tool) {
-        case 'paint': this.pushUndo(); this.paintCell(cell.x, cell.y); break;
+        case 'paint': this.beginStroke(); this.paintCell(cell.x, cell.y); break;
         case 'eyedropper': this.eyedropCell(cell.x, cell.y); break;
-        case 'eraser': this.pushUndo(); this.eraseCell(cell.x, cell.y); break;
-        case 'fill': this.pushUndo(); this.fillCell(cell.x, cell.y); break;
+        case 'eraser': this.beginStroke(); this.eraseCell(cell.x, cell.y); break;
+        case 'fill': this.beginStroke(); this.fillCell(cell.x, cell.y); this.endStroke(); break;
       }
     }
   };
@@ -1648,6 +1818,7 @@
   BeadTool.prototype.handleMouseUp = function () {
     this.isDragging = false; this.lastPaintedIdx = -1; this.dragStartButton = -1;
     this.isPanning = false;
+    this.endStroke();
   };
 
   // ========== 工具操作 ==========
@@ -1656,23 +1827,29 @@
     var idx = y * this.grid.width + x;
     var cur = this.grid.cells[idx];
     // 锁定已填充格子: 已有颜色的格子不可被其他颜色覆盖
-    if (this.lockFilled && cur >= 0) return;
+    if (this.lockFilled && cur >= 0) { this.notifyLocked(); return false; }
     if (cur !== this.selectedColorIndex) {
+      this._strokeChanged = true;
       this.grid.cells[idx] = this.selectedColorIndex;
       this.renderCell(x, y);
       this.updateStats();
       this.triggerFillAnim(idx);
+      return true;
     }
+    return false;
   };
 
   BeadTool.prototype.eraseCell = function (x, y) {
     var idx = y * this.grid.width + x;
     // 锁定已填充格子: 不能擦除已填充的格子
-    if (this.lockFilled && this.grid.cells[idx] >= 0) return;
+    if (this.lockFilled && this.grid.cells[idx] >= 0) { this.notifyLocked(); return false; }
     if (this.grid.cells[idx] !== -1) {
+      this._strokeChanged = true;
       this.grid.cells[idx] = -1; this.grid.done[idx] = 0;
       this.renderCell(x, y); this.updateStats();
+      return true;
     }
+    return false;
   };
 
   BeadTool.prototype.eyedropCell = function (x, y) {
@@ -1694,8 +1871,8 @@
     var targetColor = this.grid.cells[startIdx];
     var fillColor = this.selectedColorIndex;
     // 锁定已填充格子: 只能填充空白区域, 不能覆盖已填充格子
-    if (this.lockFilled && targetColor !== -1) return;
-    if (targetColor === fillColor) return;
+    if (this.lockFilled && targetColor !== -1) { this.notifyLocked(); return false; }
+    if (targetColor === fillColor) return false;
     var stack = [[startX, startY]];
     var visited = new Uint8Array(gw * gh);
     var count = 0;
@@ -1712,15 +1889,16 @@
       stack.push([px + 1, py]); stack.push([px - 1, py]);
       stack.push([px, py + 1]); stack.push([px, py - 1]);
     }
-    if (count > 0) this.triggerFillAnim(startIdx);
+    if (count > 0) { this._strokeChanged = true; this.triggerFillAnim(startIdx); }
     this.renderGrid(); this.updateStats();
     this.toast('填充了 ' + count + ' 颗', 'success');
+    return count > 0;
   };
 
   BeadTool.prototype.toggleProgress = function (x, y) {
     var idx = y * this.grid.width + x;
     if (this.grid.cells[idx] < 0) return;
-    this.pushUndo();
+    this._strokeChanged = true;
     this.grid.done[idx] = this.grid.done[idx] ? 0 : 1;
     this.renderCell(x, y);
     this.updateStats();
@@ -1746,8 +1924,31 @@
     this._animRAF = requestAnimationFrame(tick);
   };
 
-  // ========== 撤销 ==========
+  // ========== 撤销 / 重做 ==========
 
+  // 一次连续操作开始: 记录操作前快照 (此时尚未修改, 不计入历史)
+  BeadTool.prototype.beginStroke = function () {
+    if (!this.grid) return;
+    this._strokeSnap = {
+      cells: new Int16Array(this.grid.cells),
+      done: new Uint8Array(this.grid.done)
+    };
+    this._strokeChanged = false;
+  };
+
+  // 一次连续操作结束: 仅有实际修改才写入撤销历史, 并清空重做历史
+  BeadTool.prototype.endStroke = function () {
+    if (this._strokeSnap && this._strokeChanged) {
+      this.undoStack.push(this._strokeSnap);
+      if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
+      this.redoStack = [];
+    }
+    this._strokeSnap = null;
+    this._strokeChanged = false;
+    this.updateUndoRedoButtons();
+  };
+
+  // 兼容旧调用: 直接把当前状态压入撤销栈并清空重做 (用于整体重置等)
   BeadTool.prototype.pushUndo = function () {
     if (!this.grid) return;
     this.undoStack.push({
@@ -1755,15 +1956,53 @@
       done: new Uint8Array(this.grid.done)
     });
     if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
+    this.redoStack = [];
+    this.updateUndoRedoButtons();
   };
 
   BeadTool.prototype.undo = function () {
     if (!this.grid || this.undoStack.length === 0) { this.toast('没有可撤销的操作', 'warning'); return; }
+    // 当前状态存入重做栈, 便于之后重做
+    this.redoStack.push({
+      cells: new Int16Array(this.grid.cells),
+      done: new Uint8Array(this.grid.done)
+    });
     var snap = this.undoStack.pop();
     this.grid.cells = snap.cells;
     this.grid.done = snap.done;
     this.renderGrid(); this.updateStats();
+    this.updateUndoRedoButtons();
     this.toast('已撤销');
+  };
+
+  BeadTool.prototype.redo = function () {
+    if (!this.grid || this.redoStack.length === 0) { this.toast('没有可重做的操作', 'warning'); return; }
+    this.undoStack.push({
+      cells: new Int16Array(this.grid.cells),
+      done: new Uint8Array(this.grid.done)
+    });
+    if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
+    var snap = this.redoStack.pop();
+    this.grid.cells = snap.cells;
+    this.grid.done = snap.done;
+    this.renderGrid(); this.updateStats();
+    this.updateUndoRedoButtons();
+    this.toast('已重做');
+  };
+
+  BeadTool.prototype.updateUndoRedoButtons = function () {
+    var u = document.getElementById('btn-undo');
+    var r = document.getElementById('btn-redo');
+    if (u) u.disabled = !this.grid || this.undoStack.length === 0;
+    if (r) r.disabled = !this.grid || this.redoStack.length === 0;
+  };
+
+  // 锁定格子被尝试修改时的轻提示 (节流, 避免拖动时刷屏)
+  BeadTool.prototype.notifyLocked = function () {
+    var now = Date.now();
+    if (now - this._lastLockToast < 1500) return;
+    this._lastLockToast = now;
+    this.toast('该格子已锁定，无法修改', 'warning');
   };
 
   // ========== 统计 ==========
@@ -2009,8 +2248,11 @@
         done: Uint8Array.from(data.done)
       };
       self.undoStack = [];
+      self.redoStack = [];
       self.baseCellSize = self.calcCellSize(data.width, data.height);
       self.fitCanvas();
+      self.maybeAutoCollapseSidebar();
+      self.updateUndoRedoButtons();
       // 参考图
       if (data.referenceDataUrl) {
         self.restoreReference(data.referenceDataUrl, data.refOpacity, data.refScale, data.refOffsetX, data.refOffsetY);

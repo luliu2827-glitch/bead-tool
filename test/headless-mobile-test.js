@@ -1,0 +1,463 @@
+/**
+ * Headless DOM-stub test for the bead-pattern tool's mobile / iPad logic.
+ *
+ * Loads the REAL app.js (plus its palette + data dependencies) inside a
+ * Node `vm` context with a minimal DOM stub, then exercises the §十六
+ * (16-part mobile optimization) behaviors that are testable without a browser:
+ *
+ *   - Undo / redo round-trip + consecutive ops + redo-clears-on-new-edit
+ *   - Lock-aware history (locked misclick creates NO undo entry)
+ *   - Eraser clears colorId AND done; eraser obeys lock
+ *   - Fill obeys lock (blocks filled targets, allows empty regions)
+ *   - Two-finger pinch = zoom + pan with NO cell mutation
+ *   - Multi-touch guard: single-finger action suppressed right after a pinch
+ *   - 5-tool consistency (paint/eraser/move/eyedropper/fill) + BIEF fix
+ *   - Mobile bottom MARD palette bar populated
+ *   - Reference hide / show + ☰ sidebar drawer + auto-collapse on mobile
+ *   - Trash button clearly labeled (🗑 清空画布)
+ *   - MARD palette / highlight / lock all behave normally
+ *   - Desktop mouse handlers still bound (move tool preserved)
+ *
+ * Run: node test/headless-mobile-test.js
+ */
+
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const ROOT = path.resolve(__dirname, '..');
+function read(p) { return fs.readFileSync(path.join(ROOT, p), 'utf8'); }
+
+// ---------------------------------------------------------------------------
+// Fake DOM
+// ---------------------------------------------------------------------------
+
+function FakeClassList() { this._s = new Set(); }
+FakeClassList.prototype.add = function (c) { this._s.add(c); };
+FakeClassList.prototype.remove = function (c) { this._s.delete(c); };
+FakeClassList.prototype.contains = function (c) { return this._s.has(c); };
+FakeClassList.prototype.toggle = function (c, force) {
+  if (force === undefined) {
+    if (this._s.has(c)) { this._s.delete(c); return false; }
+    this._s.add(c); return true;
+  }
+  if (force) this._s.add(c); else this._s.delete(c);
+  return !!force;
+};
+
+// No-op 2D context proxy: every method is a no-op, every property is settable.
+const ctxProxy = new Proxy({}, {
+  get(t, p) { return (p in t) ? t[p] : function () { return undefined; }; },
+  set(t, p, v) { t[p] = v; return true; }
+});
+
+const sharedParentRect = { left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 };
+
+function makeEl() {
+  const el = {
+    style: {},
+    dataset: {},
+    _handlers: {},
+    children: [],
+    classList: new FakeClassList(),
+    _text: '',
+    _html: '',
+    value: '',
+    disabled: false,
+    checked: false,
+    className: '',
+    width: 0,
+    height: 0,
+    addEventListener(type, fn) { (el._handlers[type] = el._handlers[type] || []).push(fn); },
+    removeEventListener(type, fn) {
+      const a = el._handlers[type]; if (!a) return;
+      const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1);
+    },
+    appendChild(c) { el.children.push(c); return c; },
+    removeChild(c) { const i = el.children.indexOf(c); if (i >= 0) el.children.splice(i, 1); },
+    remove() {},
+    setAttribute() {},
+    getAttribute() { return null; },
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    getBoundingClientRect() { return { left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600 }; },
+    querySelector() { return makeEl(); },
+    querySelectorAll() { return []; },
+    focus() {}, blur() {},
+    closest() { return null; },
+    getContext() { return ctxProxy; }
+  };
+  el.parentNode = {
+    getBoundingClientRect() { return sharedParentRect; },
+    classList: new FakeClassList(),
+    style: {}
+  };
+  Object.defineProperty(el, 'textContent', {
+    get() { return el._text; }, set(v) { el._text = v; el._html = ''; }
+  });
+  // Setting innerHTML is treated as replacing content -> clears children too.
+  Object.defineProperty(el, 'innerHTML', {
+    get() { return el._html; },
+    set(v) { el._html = v; el._text = ''; el.children = []; }
+  });
+  return el;
+}
+
+const byId = {};
+const bySel = {};
+const documentObj = {
+  _domReady: [],
+  _h: {},
+  getElementById(id) { return byId[id] || (byId[id] = makeEl()); },
+  createElement() { return makeEl(); },
+  querySelector(sel) { return bySel[sel] || (bySel[sel] = makeEl()); },
+  querySelectorAll() { return []; },
+  addEventListener(type, fn) {
+    if (type === 'DOMContentLoaded') documentObj._domReady.push(fn);
+    else documentObj._h[type] = (documentObj._h[type] || []).concat(fn);
+  },
+  removeEventListener() {},
+  body: makeEl()
+};
+
+const localStorageObj = (function () {
+  const m = {};
+  return {
+    getItem(k) { return (k in m) ? m[k] : null; },
+    setItem(k, v) { m[k] = String(v); },
+    removeItem(k) { delete m[k]; }
+  };
+})();
+
+const sandbox = {
+  console: console,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout,
+  performance: { now: function () { return Date.now(); } },
+  requestAnimationFrame: function () { return 0; },
+  cancelAnimationFrame: function () {},
+  localStorage: localStorageObj,
+  // indexedDB intentionally left UNDEFINED -> forces localStorage fallback path
+  document: documentObj
+};
+// window === sandbox so `global.PALETTES = ...` (palettes.js) lands on the
+// context global and is visible to app.js; also satisfies window.* references.
+sandbox.window = sandbox;
+sandbox.addEventListener = function () {};
+sandbox.removeEventListener = function () {};
+
+// ---------------------------------------------------------------------------
+// Load all sources as ONE concatenated script so top-level const/let (palette
+// data) stay in a single lexical scope and remain visible across "files".
+// ---------------------------------------------------------------------------
+
+const files = [
+  'js/bead-palette.js',
+  'data/palettes/mard-standard.js',
+  'data/palettes/mard-full.js',
+  'js/palettes.js',
+  'js/xlsx-export.js',
+  'js/app.js'
+];
+const combined = files.map(read).join('\n;\n');
+
+vm.createContext(sandbox);
+try {
+  vm.runInContext(combined, sandbox, { filename: 'bead-combined.js' });
+} catch (e) {
+  console.error('FATAL: failed to evaluate sources in vm:', e);
+  process.exit(2);
+}
+
+// Trigger DOMContentLoaded -> instantiates BeadTool + runs init()
+documentObj._domReady.forEach(function (fn) { fn(); });
+
+const bt = sandbox.window.beadTool;
+if (!bt) {
+  console.error('FATAL: window.beadTool was not created by init()');
+  process.exit(2);
+}
+
+// ---------------------------------------------------------------------------
+// Tiny assertion framework
+// ---------------------------------------------------------------------------
+
+let pass = 0, fail = 0;
+const failures = [];
+function ok(name, cond) {
+  if (cond) { pass++; console.log('  ✓ ' + name); }
+  else { fail++; failures.push(name); console.log('  ✗ ' + name); }
+}
+function eq(name, a, b) {
+  ok(name + '  (' + JSON.stringify(a) + ' === ' + JSON.stringify(b) + ')', a === b);
+}
+function cellsEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+function fire(el, type, ev) {
+  (el._handlers[type] || []).forEach(function (h) { h(ev); });
+}
+function t(x, y) { return { clientX: x, clientY: y }; }
+function touchEv(touches, changed) {
+  return { preventDefault() {}, touches: touches, changedTouches: changed || touches };
+}
+// Fresh 8x8 grid + clean undo state. Keeps tests isolated.
+function resetGrid(idx) {
+  bt.undoStack = []; bt.redoStack = [];
+  bt.createBlankGrid(8, 8, false);
+  bt._strokeSnap = null; bt._strokeChanged = false;
+  bt.lockFilled = false; bt.highlightCurrent = false;
+  bt.selectedColorIndex = (idx == null ? 2 : idx);
+}
+
+// ===========================================================================
+console.log('\n=== MARD palette / baseline ===');
+resetGrid();
+ok('grid created 8x8', bt.grid && bt.grid.width === 8 && bt.grid.height === 8);
+eq('default palette is mard-standard', bt.paletteId, 'mard-standard');
+ok('MARD palette loaded (>200 colors)', bt.palette.length > 200);
+
+// ===========================================================================
+console.log('\n=== (一) Undo / Redo ===');
+resetGrid();
+bt.beginStroke(); bt.paintCell(0, 0); bt.endStroke();
+eq('paint set cells[0]=2', bt.grid.cells[0], 2);
+eq('one undo entry after paint', bt.undoStack.length, 1);
+
+bt.undo();
+eq('undo reverted cells[0]=-1', bt.grid.cells[0], -1);
+eq('redo stack has 1 entry', bt.redoStack.length, 1);
+
+bt.redo();
+eq('redo restored cells[0]=2', bt.grid.cells[0], 2);
+
+// consecutive ops undoable
+bt.beginStroke(); bt.paintCell(1, 0); bt.endStroke();   // idx = 0*8 + 1 = 1
+bt.beginStroke(); bt.paintCell(2, 0); bt.endStroke();   // idx = 2
+eq('two more paints -> 3 undo entries', bt.undoStack.length, 3);
+bt.undo(); bt.undo();
+eq('two undos cleared cells[1] & cells[2]',
+   bt.grid.cells[1] === -1 && bt.grid.cells[2] === -1, true);
+// redo re-applies the LAST undone op (paint 1,0)
+bt.redo();
+eq('redo re-applied paint(1,0) -> cells[1]=2', bt.grid.cells[1], 2);
+eq('redo left the still-undone paint(2,0) -> cells[2]=-1', bt.grid.cells[2], -1);
+
+// new edit after undo clears redo history
+bt.beginStroke(); bt.paintCell(3, 0); bt.endStroke();   // idx = 3
+eq('new edit cleared redo history', bt.redoStack.length, 0);
+
+// ===========================================================================
+console.log('\n=== (六) Lock-aware history (locked misclick -> NO undo entry) ===');
+resetGrid();
+bt.selectedColorIndex = 2;
+bt.beginStroke(); bt.paintCell(0, 0); bt.endStroke();
+eq('filled cells[0]=2 (unlocked)', bt.grid.cells[0], 2);
+eq('1 undo entry from fill', bt.undoStack.length, 1);
+
+bt.lockFilled = true;
+const beforeLockHist = bt.undoStack.length;
+bt._lastLockToast = 0;
+bt.beginStroke(); const rLockSame = bt.paintCell(0, 0); bt.endStroke();
+eq('locked paint (same color) returns false', rLockSame, false);
+eq('locked misclick did NOT add undo entry', bt.undoStack.length, beforeLockHist);
+eq('locked cell unchanged (still 2)', bt.grid.cells[0], 2);
+
+bt.selectedColorIndex = 5;
+bt.beginStroke(); const rLockDiff = bt.paintCell(0, 0); bt.endStroke();
+eq('locked paint (diff color) returns false', rLockDiff, false);
+eq('still no new undo entry', bt.undoStack.length, beforeLockHist);
+eq('locked cell still 2 (not overwritten to 5)', bt.grid.cells[0], 2);
+
+// ===========================================================================
+console.log('\n=== (六) Eraser clears colorId AND done; eraser obeys lock ===');
+resetGrid();
+bt.selectedColorIndex = 4;
+bt.beginStroke(); bt.paintCell(2, 2); bt.endStroke();        // cells[2,2]=4
+bt.beginStroke(); bt.toggleProgress(2, 2); bt.endStroke();   // mark done
+eq('cell (2,2) painted', bt.grid.cells[2 * 8 + 2], 4);
+eq('cell (2,2) marked done', bt.grid.done[2 * 8 + 2], 1);
+
+bt.beginStroke(); const rErase = bt.eraseCell(2, 2); bt.endStroke();
+eq('erase returns true', rErase, true);
+eq('erase cleared colorId (-1)', bt.grid.cells[2 * 8 + 2], -1);
+eq('erase cleared done flag (0)', bt.grid.done[2 * 8 + 2], 0);
+
+// eraser obeys lock
+bt.lockFilled = true;
+bt.selectedColorIndex = 3;
+bt.beginStroke(); bt.paintCell(1, 1); bt.endStroke();        // allowed (was empty)
+eq('filled (1,1)=3 while locked (empty allowed)', bt.grid.cells[1 * 8 + 1], 3);
+const beforeEraseLock = bt.undoStack.length;
+bt.beginStroke(); const rEraseLock = bt.eraseCell(1, 1); bt.endStroke();
+eq('erase on locked filled cell returns false', rEraseLock, false);
+eq('locked cell NOT erased (still 3)', bt.grid.cells[1 * 8 + 1], 3);
+eq('erase-on-locked added no undo entry', bt.undoStack.length, beforeEraseLock);
+
+// ===========================================================================
+console.log('\n=== (六) Fill obeys lock ===');
+resetGrid();
+bt.lockFilled = true;
+bt.selectedColorIndex = 2;
+bt.beginStroke(); bt.paintCell(0, 0); bt.endStroke();        // cells[0]=2 (filled)
+bt.selectedColorIndex = 7;
+bt.beginStroke(); const rFillLocked = bt.fillCell(0, 0); bt.endStroke();
+eq('fill on locked filled target returns false', rFillLocked, false);
+eq('locked target unchanged', bt.grid.cells[0], 2);
+
+// fill on EMPTY region allowed even when locked (lock only guards filled)
+bt.selectedColorIndex = 9;
+bt.beginStroke(); const rFillEmpty = bt.fillCell(5, 5); bt.endStroke();
+ok('fill on empty region allowed while locked (returns true)', rFillEmpty === true);
+eq('empty cell (5,5) got fill color 9', bt.grid.cells[5 * 8 + 5], 9);
+
+// ===========================================================================
+console.log('\n=== (三/十五) Two-finger pinch = zoom + pan, NO cell mutation ===');
+resetGrid();
+bt.cellSize = 20; bt.panX = 50; bt.panY = 30;
+const cellsBefore = Int16Array.from(bt.grid.cells);
+const undoBefore = bt.undoStack.length;
+
+const canvas = bt.canvas;
+fire(canvas, 'touchstart', touchEv([t(100, 100), t(200, 100)]));
+eq('isPinching true after 2-finger start', bt.isPinching, true);
+eq('_multiTouch true after 2-finger start', bt._multiTouch, true);
+
+fire(canvas, 'touchmove', touchEv([t(80, 120), t(220, 120)]));
+eq('cellSize zoomed to 28', bt.cellSize, 28);
+eq('panX preserved by clamp (10)', bt.panX, 10);
+eq('panY preserved by clamp (22)', bt.panY, 22);
+
+fire(canvas, 'touchend', touchEv([], []));
+eq('_multiTouch reset after all fingers up', bt._multiTouch, false);
+
+ok('NO cell mutated during two-finger gesture', cellsEqual(bt.grid.cells, cellsBefore));
+eq('NO undo entry created by gesture', bt.undoStack.length, undoBefore);
+
+// ===========================================================================
+console.log('\n=== (十五) Multi-touch guard: single-finger suppressed right after pinch ===');
+bt.isPinching = false; bt._multiTouch = false; bt.isDragging = false;
+bt.touchMoved = false; bt._touchCount = 0; bt.tool = 'paint';
+fire(canvas, 'touchstart', touchEv([t(100, 100), t(200, 100)]));
+fire(canvas, 'touchmove', touchEv([t(80, 120), t(220, 120)]));
+fire(canvas, 'touchend', touchEv([t(150, 110)]));     // lift ONE finger: residue remains
+eq('_multiTouch still true with 1 finger remaining', bt._multiTouch, true);
+
+bt.tool = 'paint';
+fire(canvas, 'touchstart', touchEv([t(150, 110)]));    // single tap while residue
+eq('single-finger action suppressed after pinch (isDragging false)', bt.isDragging, false);
+
+fire(canvas, 'touchend', touchEv([], []));             // fully release
+eq('_multiTouch cleared after full release', bt._multiTouch, false);
+
+bt.tool = 'paint';
+fire(canvas, 'touchstart', touchEv([t(150, 110)]));    // genuine single tap now
+eq('single-finger action works after full release (isDragging true)', bt.isDragging, true);
+bt.isDragging = false;
+
+// ===========================================================================
+console.log('\n=== (十一) Tool consistency (5 tools) + BIEF fix ===');
+const tools = ['paint', 'eraser', 'move', 'eyedropper', 'fill'];
+tools.forEach(function (tl) {
+  bt.selectTool(tl);
+  eq('selectTool("' + tl + '") sets this.tool', bt.tool, tl);
+});
+eq('exactly 5 distinct tools', tools.length, 5);
+
+const html = read('index.html');
+ok('tool buttons use data-tool for all 5 (paint/eraser/move/eyedropper/fill)',
+   ['paint', 'eraser', 'move', 'eyedropper', 'fill'].every(function (k) {
+     return html.indexOf('data-tool="' + k + '"') !== -1;
+   }));
+// eraser also exists in the sidebar, so scope the check to the TOP toolbar only
+var tbStart = html.indexOf('class="canvas-toolbar"');
+var topToolbar = html.slice(tbStart, tbStart + 900);
+ok('top canvas toolbar promotes eraser alongside paint/move/eyedropper (fill stays in sidebar)',
+   ['paint', 'eraser', 'move', 'eyedropper'].every(function (k) {
+     return topToolbar.indexOf('data-tool="' + k + '"') !== -1;
+   }) && topToolbar.indexOf('data-tool="fill"') === -1);
+ok('BIEF misleading label removed (no "B/I/E/F")', html.indexOf('B/I/E/F') === -1);
+ok('tool heading now lists 5 names (画笔·橡皮·移动·吸管·填充)',
+   html.indexOf('画笔 · 橡皮 · 移动 · 吸管 · 填充') !== -1);
+ok('undo button present (btn-undo)', html.indexOf('id="btn-undo"') !== -1);
+ok('redo button present (btn-redo)', html.indexOf('id="btn-redo"') !== -1);
+ok('lock toggle present (btn-lock-toggle)', html.indexOf('id="btn-lock-toggle"') !== -1);
+ok('highlight toggle present (btn-highlight-toggle)', html.indexOf('id="btn-highlight-toggle"') !== -1);
+ok('sidebar ☰ toggle present (btn-toggle-sidebar)', html.indexOf('id="btn-toggle-sidebar"') !== -1);
+
+// ===========================================================================
+console.log('\n=== (七/九) Mobile bottom MARD palette bar ===');
+bt.renderMobilePalette();
+const mpBar = byId['mobile-palette-bar'];
+ok('mobile palette bar populated with one swatch per color',
+   mpBar && mpBar.children.length === bt.palette.length && bt.palette.length > 0);
+
+// ===========================================================================
+console.log('\n=== (十四) Reference hide / show + (八) ☰ drawer + auto-collapse ===');
+resetGrid();
+bt.toggleReferencePane();
+ok('reference pane hidden after toggle', byId['reference-pane'].classList.contains('hidden'));
+bt.showReferencePane();
+ok('reference pane shown again via showReferencePane', !byId['reference-pane'].classList.contains('hidden'));
+
+bt._sbTouched = false;
+bt.toggleSidebar();   // also creates + caches the '.main' element
+const mainEl = documentObj.querySelector('.main');
+ok('☰ toggle collapses sidebar (sb-collapsed added)', mainEl.classList.contains('sb-collapsed'));
+bt.toggleSidebar();
+ok('☰ toggle reopens sidebar', !mainEl.classList.contains('sb-collapsed'));
+
+bt._sbTouched = false;
+sandbox.matchMedia = function () { return { matches: true }; };
+bt.maybeAutoCollapseSidebar();
+ok('auto-collapse triggers on mobile viewport', mainEl.classList.contains('sb-collapsed'));
+sandbox.matchMedia = undefined;
+
+// ===========================================================================
+console.log('\n=== (十) Trash button clearly labeled ===');
+ok('🗑 clear-canvas button present (btn-clear-canvas)', html.indexOf('id="btn-clear-canvas"') !== -1);
+ok('clear button labeled 清空画布', html.indexOf('清空画布') !== -1);
+
+// ===========================================================================
+console.log('\n=== (十六) MARD / highlight / lock normal ===');
+resetGrid();
+bt.highlightCurrent = true;
+bt.selectedColorIndex = 0;
+bt.beginStroke(); bt.paintCell(4, 4); bt.endStroke();
+eq('paint with highlight on works (cells set)', bt.grid.cells[4 * 8 + 4], 0);
+bt.highlightCurrent = false;
+
+bt.lockFilled = true;
+bt.selectedColorIndex = 1;
+bt.beginStroke(); const rEmptyLock = bt.paintCell(6, 6); bt.endStroke();
+eq('empty cell paintable while locked', rEmptyLock, true);
+eq('empty cell (6,6)=1', bt.grid.cells[6 * 8 + 6], 1);
+bt.selectedColorIndex = 8;
+bt.beginStroke(); const rFilledLock = bt.paintCell(6, 6); bt.endStroke();
+eq('filled cell protected by lock (returns false)', rFilledLock, false);
+eq('filled cell (6,6) stays 1', bt.grid.cells[6 * 8 + 6], 1);
+bt.lockFilled = false;
+
+// ===========================================================================
+console.log('\n=== (十六#22) Desktop mouse handlers still bound ===');
+ok('mousedown handler bound on canvas (desktop paint/drag)', !!(canvas._handlers['mousedown'] && canvas._handlers['mousedown'].length));
+ok('mousemove handler bound on canvas', !!(canvas._handlers['mousemove'] && canvas._handlers['mousemove'].length));
+ok('mouseup handler bound on canvas', !!(canvas._handlers['mouseup'] && canvas._handlers['mouseup'].length));
+bt.selectTool('move');
+eq('move tool preserved for desktop', bt.tool, 'move');
+
+// ===========================================================================
+console.log('\n=== RESULT ===');
+console.log('  PASS: ' + pass + '   FAIL: ' + fail);
+if (fail > 0) {
+  console.log('  Failed checks:');
+  failures.forEach(function (f) { console.log('   - ' + f); });
+  process.exit(1);
+} else {
+  console.log('  All headless checks passed.');
+  process.exit(0);
+}

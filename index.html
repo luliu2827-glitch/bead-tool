@@ -11,6 +11,7 @@
     <!-- ===== 顶栏 ===== -->
     <header class="topbar">
       <div class="topbar-left">
+        <button id="btn-toggle-sidebar" class="tb-btn sb-toggle" title="展开 / 收起功能栏 (☰)">☰</button>
         <h1>🫧 拼豆图纸工具</h1>
       </div>
       <div class="topbar-center">
@@ -34,7 +35,7 @@
       <aside class="sidebar">
 
         <!-- 图片导入 -->
-        <section class="panel">
+        <section class="panel aux-panel">
           <h2>图片导入</h2>
           <div id="drop-zone" class="drop-zone">
             <p>📁 拖放图片到此处</p>
@@ -52,7 +53,7 @@
         </section>
 
         <!-- 像素化设置 -->
-        <section class="panel">
+        <section class="panel aux-panel">
           <h2>像素化设置</h2>
           <div class="setting-row">
             <label>图纸宽度</label>
@@ -87,19 +88,19 @@
         </section>
 
         <!-- 工具 -->
-        <section class="panel">
-          <h2>工具 <span style="font-weight:400;color:var(--text-muted);font-size:11px;text-transform:none">(B/I/E/F)</span></h2>
+        <section class="panel aux-panel">
+          <h2>工具 <span style="font-weight:400;color:var(--text-muted);font-size:11px;text-transform:none">画笔 · 橡皮 · 移动 · 吸管 · 填充</span></h2>
           <div class="tool-grid">
-            <button class="tool-btn active" data-tool="paint" title="画笔 (B)">🖌</button>
-            <button class="tool-btn" data-tool="move" title="移动画布">✋</button>
-            <button class="tool-btn" data-tool="eyedropper" title="吸管 (I)">💧</button>
-            <button class="tool-btn" data-tool="eraser" title="橡皮 (E)">🧽</button>
-            <button class="tool-btn" data-tool="fill" title="填充 (F)">🪣</button>
+            <button class="tool-btn active" data-tool="paint" title="画笔 (B) — 点击或拖动填色">🖌<span class="tool-label">填色</span></button>
+            <button class="tool-btn" data-tool="eraser" title="橡皮擦 (E) — 清除格子颜色与完成状态">🧽<span class="tool-label">橡皮</span></button>
+            <button class="tool-btn" data-tool="move" title="移动画布 — 鼠标拖动平移画布">✋<span class="tool-label">移动</span></button>
+            <button class="tool-btn" data-tool="eyedropper" title="吸管 (I) — 点击格子取色">💧<span class="tool-label">吸色</span></button>
+            <button class="tool-btn" data-tool="fill" title="填充 (F) — 批量填充相连同色区域">🪣<span class="tool-label">填充</span></button>
           </div>
         </section>
 
         <!-- 电子拼豆制作模式 -->
-        <section class="panel">
+        <section class="panel aux-panel">
           <h2>制作模式 <span class="panel-tag">电子拼豆</span></h2>
           <label class="make-toggle">
             <input type="checkbox" id="toggle-lock-filled">
@@ -113,7 +114,7 @@
         </section>
 
         <!-- 空白画布 (电子拼豆) -->
-        <section class="panel">
+        <section class="panel aux-panel">
           <h2>空白画布 <span class="panel-tag">电子拼豆</span></h2>
           <div class="setting-row">
             <label>宽度</label>
@@ -135,11 +136,12 @@
             <button type="button" data-custom="1">自定义</button>
           </div>
           <button id="btn-blank-canvas" class="btn-primary" type="button">生成空白画布</button>
-          <p class="make-hint">修改尺寸会清空当前画布（已完成的拼豆会丢失）。如需保留，请先点右上角 💾 保存。</p>
+          <button id="btn-clear-canvas" class="btn-secondary" type="button" title="清空整个画布 (保留尺寸, 可撤销)">🗑 清空画布</button>
+          <p class="make-hint">修改尺寸会清空当前画布（已完成的拼豆会丢失）。如需保留，请先点右上角 💾 保存。「清空画布」只清空格子内容、保留尺寸，可撤销。</p>
         </section>
 
         <!-- 参考图片 (制作参考) -->
-        <section class="panel">
+        <section class="panel aux-panel">
           <h2>参考图片 <span class="panel-tag">制作参考</span></h2>
           <p class="panel-note">上传成品拼豆图片，照着它逐格完成电子拼豆。</p>
           <button id="btn-ref-upload-side" type="button" class="btn-secondary" style="width:100%">📷 上传参考图片</button>
@@ -147,7 +149,7 @@
         </section>
 
         <!-- 进度操作 (仅进度模式显示) -->
-        <section class="panel" id="progress-actions" style="display:none;">
+        <section class="panel aux-panel" id="progress-actions" style="display:none;">
           <h2>进度操作</h2>
           <div class="progress-actions">
             <button type="button" data-action="clear">清除进度</button>
@@ -167,7 +169,7 @@
         </section>
 
         <!-- 统计 -->
-        <section class="panel">
+        <section class="panel aux-panel">
           <h2>统计</h2>
           <div class="stats">
             <div class="stat-row">
@@ -214,9 +216,15 @@
           <span class="info" id="grid-info">未加载图纸</span>
           <span class="tb-sep"></span>
           <div class="tb-group" title="工具">
-            <button class="tool-btn tb-tool active" data-tool="paint" title="填色 (点击格子填色)">🖌</button>
-            <button class="tool-btn tb-tool" data-tool="move" title="移动画布 (拖动平移 / 双指缩放)">✋</button>
-            <button class="tool-btn tb-tool" data-tool="eyedropper" title="吸色 (点击格子取色, 自动切回填色)">💧</button>
+            <button class="tool-btn tb-tool active" data-tool="paint" title="填色 (点击 / 拖动填色)"><span class="tool-ico">🖌</span><span class="tool-text">填色</span></button>
+            <button class="tool-btn tb-tool" data-tool="eraser" title="橡皮擦 (清除格子颜色与完成状态)"><span class="tool-ico">🧽</span><span class="tool-text">橡皮</span></button>
+            <button class="tool-btn tb-tool" data-tool="move" title="移动画布 (鼠标拖动 / 双指平移)"><span class="tool-ico">✋</span><span class="tool-text">移动</span></button>
+            <button class="tool-btn tb-tool" data-tool="eyedropper" title="吸色 (点击格子取色, 自动切回填色)"><span class="tool-ico">💧</span><span class="tool-text">吸色</span></button>
+          </div>
+          <span class="tb-sep"></span>
+          <div class="tb-group" title="撤销 / 重做">
+            <button id="btn-undo" class="tb-btn" title="撤销 (↶)">↶ 撤销</button>
+            <button id="btn-redo" class="tb-btn" title="重做 (↷)">↷ 重做</button>
           </div>
           <span class="tb-sep"></span>
           <div class="tb-zoom" title="缩放">
@@ -226,9 +234,14 @@
             <button id="btn-zoom-reset" title="恢复 100%">100%</button>
             <button id="btn-fit" title="适应窗口">适应</button>
           </div>
+          <span class="tb-sep"></span>
+          <div class="tb-group" title="制作模式">
+            <button id="btn-lock-toggle" class="tb-btn" title="锁定已填充格子 (保护已完成, 防止误改)">🔒 锁定</button>
+            <button id="btn-highlight-toggle" class="tb-btn" title="高亮当前颜色 (突出目标格子)">✨ 高亮</button>
+          </div>
           <span class="spacer"></span>
-          <button id="btn-toggle-reference" class="tb-btn" title="显示/隐藏参考图">🖼️ 隐藏参考图</button>
-          <span class="info hint">🖌填色 · ✋移动 · 💧吸色 · 滚轮/双指缩放 · 移动工具拖动平移</span>
+          <button id="btn-toggle-reference" class="tb-btn" title="显示 / 隐藏参考图">🖼️ 隐藏参考图</button>
+          <span class="info hint">🖌填色 · 🧽擦除 · ✋移动(双指可平移) · 💧吸色 · 双指捏合缩放 / 双指拖动平移</span>
         </div>
         <div class="workspace">
           <!-- 参考图片 (左) -->
@@ -275,6 +288,7 @@
         <div class="canvas-toolbar">
           <span class="info" id="coord-display"></span>
         </div>
+        <div id="mobile-palette-bar" class="mobile-palette-bar" title="MARD 色卡 · 点击选色"></div>
       </main>
     </div>
   </div>

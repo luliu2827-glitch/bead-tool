@@ -632,12 +632,14 @@ body {
 }
 
 .canvas-toolbar {
-  height: 36px;
+  min-height: 36px;
+  height: auto;
+  flex-wrap: wrap;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  padding: 4px 12px;
   gap: 8px;
   font-size: 12px;
   color: var(--text-secondary);
@@ -1345,4 +1347,88 @@ body {
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
+}
+
+/* ===== 移动端增强 (iPad / 手机) ===== */
+
+/* 工具栏工具文字: 桌面端隐藏, 移动端显示 */
+.tool-text { display: none; }
+
+/* ☰ 侧栏开关: 仅移动端显示 */
+.sb-toggle { display: none; }
+
+/* 制作模式开关 (顶部工具栏) 激活态 */
+.tb-btn.on {
+  background: var(--primary-light);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* 底部 MARD 色卡条 (移动端常驻, 方便选色/吸色) */
+.mobile-palette-bar {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+  flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+}
+.mobile-palette-bar .mp-swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  border: 2px solid transparent;
+  flex-shrink: 0;
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.1s ease;
+}
+.mobile-palette-bar .mp-swatch:active { transform: scale(1.15); }
+.mobile-palette-bar .mp-swatch.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-light);
+}
+
+@media (max-width: 820px) {
+  /* ☰ 显示 */
+  .sb-toggle { display: inline-flex; }
+
+  /* 侧栏变为抽屉: 默认收起, ☰ 展开 */
+  .sidebar {
+    position: absolute;
+    top: var(--topbar-height);
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    width: 84vw;
+    max-width: 320px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: var(--shadow-lg);
+  }
+  .main.sb-collapsed .sidebar { transform: translateX(-100%); }
+  .main:not(.sb-collapsed) .sidebar { transform: translateX(0); }
+
+  /* 顶部画布工具栏换行, 隐藏提示/分隔, 避免拥挤 */
+  .canvas-toolbar { flex-wrap: wrap; height: auto; padding: 6px 8px; gap: 6px; }
+  .canvas-toolbar .info.hint { display: none; }
+  .canvas-toolbar .tb-sep { display: none; }
+  .canvas-toolbar .spacer { display: none; }
+
+  /* 工具按钮: 显示图标 + 文字 */
+  .canvas-toolbar .tb-tool {
+    width: auto;
+    aspect-ratio: auto;
+    height: 32px;
+    padding: 0 8px;
+    gap: 3px;
+  }
+  .canvas-toolbar .tool-text { display: inline; font-size: 11px; line-height: 1; }
+  .canvas-toolbar .tool-ico { font-size: 16px; line-height: 1; }
+
+  /* 底部色卡条常驻 */
+  .mobile-palette-bar { display: flex; }
 }

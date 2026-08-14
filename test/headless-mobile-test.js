@@ -430,11 +430,14 @@ ok('tool buttons use data-tool for all 5 (paint/eraser/move/eyedropper/fill)',
    }));
 // eraser also exists in the sidebar, so scope the check to the TOP toolbar only
 var tbStart = html.indexOf('class="canvas-toolbar"');
-var topToolbar = html.slice(tbStart, tbStart + 900);
-ok('top canvas toolbar promotes eraser alongside paint/move/eyedropper (fill stays in sidebar)',
-   ['paint', 'eraser', 'move', 'eyedropper'].every(function (k) {
+var topToolbar = html.slice(tbStart, tbStart + 2000);
+ok('top canvas toolbar has all 6 edit tools incl 填充 (data-tool="fill")',
+   ['paint', 'eraser', 'move', 'eyedropper', 'fill', 'reference'].every(function (k) {
      return topToolbar.indexOf('data-tool="' + k + '"') !== -1;
-   }) && topToolbar.indexOf('data-tool="fill"') === -1);
+   }));
+ok('顶部工具栏三组清晰分组: 拼豆编辑 / 参考图 / 画布',
+   topToolbar.indexOf('拼豆编辑') !== -1 && topToolbar.indexOf('参考图') !== -1 && topToolbar.indexOf('画布') !== -1);
+ok('顶部工具栏区分画布缩放与参考图控制 (ref-mode-toggle 在顶栏)', html.indexOf('id="ref-mode-toggle"') !== -1);
 ok('BIEF misleading label removed (no "B/I/E/F")', html.indexOf('B/I/E/F') === -1);
 ok('tool heading now lists 5 names (画笔·橡皮·移动·吸管·填充)',
    html.indexOf('画笔 · 橡皮 · 移动 · 吸管 · 填充') !== -1);
@@ -450,6 +453,7 @@ bt.renderMobilePalette();
 const mpBar = byId['mobile-palette-bar'];
 ok('mobile palette bar populated with one swatch per color',
    mpBar && mpBar.children.length === bt.palette.length && bt.palette.length > 0);
+ok('紧凑色卡条每个色块含 MARD 编号 (mp-id)', mpBar && mpBar.children[0] && mpBar.children[0].children.length >= 1 && mpBar.children[0].children[0].textContent === bt.palette[0].id);
 
 // ===========================================================================
 console.log('\n=== (十四) Reference hide / show + (八) ☰ drawer + auto-collapse ===');
@@ -524,6 +528,12 @@ console.log('\n=== (新增) 参考图叠加模式 / 对齐 / 工具路由 / Exce
 ok('exportXLSX 方法已移除', typeof bt.exportXLSX === 'undefined');
 ok('全局 BeadXLSX 模块未加载 (xlsx-export.js 已删)', typeof sandbox.BeadXLSX === 'undefined');
 
+// 拼豆板颜色 (需求七): 默认白 + 侧栏可设置
+eq('默认拼豆板颜色为白色', bt.boardColor, '#ffffff');
+bt.boardColor = '#e9e9ee'; bt.renderGrid();
+ok('自定义板颜色后 renderGrid 不报错', true);
+ok('侧栏新增 拼豆板颜色 控制 (board-color-mode)', html.indexOf('id="board-color-mode"') !== -1);
+
 // 默认叠加模式 + 切换
 eq('默认 overlayMode = true', bt.overlayMode, true);
 var modeBtn = byId['ref-mode-toggle'];
@@ -539,37 +549,46 @@ bt.selectTool('reference');
 eq('可选择 reference 工具', bt.tool, 'reference');
 bt.selectTool('paint');
 
-// 参考图移动: 只改 refOffset, 不动画布/格子
+// 参考图移动 (叠加模式, 网格锚定): 只改 refCellX/Y, 不动画布/格子
 resetGrid();
-bt.cellSize = 30; bt.panX = 10; bt.panY = 20;
-bt.refOffsetX = 0; bt.refOffsetY = 0; bt.refDragOriginX = 0; bt.refDragStartX = 0; bt.refDragStartY = 0;
-bt.refMoveTo(50, 12);
-eq('refMoveTo 更新 refOffsetX', bt.refOffsetX, 50);
-eq('refMoveTo 更新 refOffsetY', bt.refOffsetY, 12);
+bt.overlayMode = true; bt.cellSize = 30; bt.panX = 10; bt.panY = 20;
+bt.referenceImage = { naturalWidth: 100, naturalHeight: 100 };
+bt.refImgW = 100; bt.refImgH = 100;
+bt.refPerCell = 10; bt.refCellX = 0; bt.refCellY = 0; bt.refScaleExtra = 1;
+bt.refDragStartX = 0; bt.refDragStartY = 0;
+bt.refMoveTo(60, 30);
+ok('refMoveTo(叠加) 更新 refCellX = dx/cellSize (≈2)', Math.abs(bt.refCellX - 2) < 1e-6);
+ok('refMoveTo(叠加) 更新 refCellY = dy/cellSize (≈1)', Math.abs(bt.refCellY - 1) < 1e-6);
 eq('参考图移动不影响画布 panX', bt.panX, 10);
 eq('参考图移动不影响画布 panY', bt.panY, 20);
 ok('参考图移动不改格子', bt.grid.cells.every(function (c) { return c === -1; }));
 
-// 参考图缩放: 只改 refScale, 不动画布/格子
-bt.refScale = 1; bt.refOffsetX = 0; bt.refOffsetY = 0; bt._refPinchDist = 1; bt.refBaseScale = 1; bt.cellSize = 30;
+// 参考图缩放 (叠加模式, 网格锚定): 只改 refScaleExtra, 不动画布/格子
+bt.refScaleExtra = 1; bt.refBaseScale = 1; bt._refPinchDist = 1; bt.refCellX = 0; bt.refCellY = 0; bt.refPerCell = 10;
 bt.refPinchTo(100, 100, 2);
-ok('refPinchTo 缩放参考图 (refScale≈2)', Math.abs(bt.refScale - 2) < 1e-6);
+ok('refPinchTo(叠加) 缩放参考图额外系数 (refScaleExtra≈2)', Math.abs(bt.refScaleExtra - 2) < 1e-6);
 eq('参考图缩放不影响画布 cellSize', bt.cellSize, 30);
 ok('参考图缩放不改格子', bt.grid.cells.every(function (c) { return c === -1; }));
 
-// 一键对齐画布: 居中 + 适配画布范围 + 保持比例, 不改画布 pan/zoom
+// 一键对齐画布: 1:1 锚定网格 (refPerCell=refImgW/grid.width) + 不改画布 pan/zoom
 resetGrid();
 bt.cellSize = 30; bt.panX = 10; bt.panY = 20;
 bt.referenceImage = { naturalWidth: 100, naturalHeight: 100 };
 bt.refImgW = 100; bt.refImgH = 100;
 bt.alignReferenceToCanvas();
-// content = 8*30 = 240; s = min(240/100,240/100) = 2.4; 居中 => refOffset == pan
-ok('对齐: refScale≈2.4 (适配画布范围)', Math.abs(bt.refScale - 2.4) < 1e-6);
-eq('对齐: 参考图中心对齐画布中心 (refOffsetX==panX)', bt.refOffsetX, 10);
-eq('对齐: 参考图中心对齐画布中心 (refOffsetY==panY)', bt.refOffsetY, 20);
+// refPerCell = 100/8 = 12.5; 叠加下 refScale = cellSize/refPerCell = 30/12.5 = 2.4; refCellX/Y=0 => refOffset==pan
+ok('对齐: refPerCell = refImgW/grid.width (≈12.5)', Math.abs(bt.refPerCell - 12.5) < 1e-6);
+ok('对齐: refScale≈2.4 (1:1 适配画布范围)', Math.abs(bt.refScale - 2.4) < 1e-6);
+eq('对齐: 参考图左上角对齐格子(0,0) -> refOffsetX==panX', bt.refOffsetX, 10);
+eq('对齐: refOffsetY==panY', bt.refOffsetY, 20);
 eq('对齐: 不改画布 cellSize', bt.cellSize, 30);
 eq('对齐: 不改画布 panX', bt.panX, 10);
 eq('对齐: 不改画布 panY', bt.panY, 20);
+
+// 关键(需求四): 画布缩放后, 参考图仍锁定到格子 (像素↔格子对应不漂移)
+bt.cellSize = 40; bt.applyCanvasTransform();
+ok('画布缩放后参考图 refScale 跟随 (40/12.5≈3.2)', Math.abs(bt.refScale - 3.2) < 1e-6);
+eq('画布缩放后参考图左上角仍对齐格子(0,0) (refOffsetX==panX)', bt.refOffsetX, 10);
 
 // ===========================================================================
 console.log('\n=== RESULT ===');

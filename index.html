@@ -109,6 +109,23 @@
           <p class="make-hint">点击「锁定已填充」只锁定当前已填的格子（逐格保护，读取/吸色不受影响）；新填格子不会自动锁定，需再次点击才锁定。高亮会突出当前颜色的格子。</p>
         </section>
 
+        <!-- 拼豆板颜色 (需求七) -->
+        <section class="panel aux-panel">
+          <h2>拼豆板颜色</h2>
+          <div class="setting-row">
+            <label>板颜色</label>
+            <select id="board-color-mode">
+              <option value="white">白色</option>
+              <option value="gray">浅灰</option>
+              <option value="custom">自定义</option>
+            </select>
+          </div>
+          <div class="setting-row" id="board-custom-row" style="display:none;">
+            <label>颜色</label>
+            <input type="color" id="board-color-custom" value="#ffffff">
+          </div>
+        </section>
+
         <!-- 空白画布 (电子拼豆) -->
         <section class="panel aux-panel">
           <h2>空白画布 <span class="panel-tag">电子拼豆</span></h2>
@@ -211,53 +228,65 @@
         <div class="canvas-toolbar">
           <span class="info" id="grid-info">未加载图纸</span>
           <span class="tb-sep"></span>
-          <div class="tb-group" title="工具">
+
+          <!-- 【拼豆编辑】分栏 / 叠加 两种模式都完整保留 -->
+          <div class="tb-group tb-group-label" title="拼豆编辑工具">
+            <span class="tb-group-title">拼豆编辑</span>
             <button class="tool-btn tb-tool active" data-tool="paint" title="填色 (点击 / 拖动填色)"><span class="tool-ico">🖌</span><span class="tool-text">填色</span></button>
             <button class="tool-btn tb-tool" data-tool="eraser" title="橡皮擦 (清除格子颜色与完成状态)"><span class="tool-ico">🧽</span><span class="tool-text">橡皮</span></button>
             <button class="tool-btn tb-tool" data-tool="move" title="移动画布 (鼠标拖动 / 双指平移)"><span class="tool-ico">✋</span><span class="tool-text">移动</span></button>
             <button class="tool-btn tb-tool" data-tool="eyedropper" title="吸色 (点击格子取色, 自动切回填色)"><span class="tool-ico">💧</span><span class="tool-text">吸色</span></button>
+            <button class="tool-btn tb-tool" data-tool="fill" title="填充 (F) 批量填充相连同色区域"><span class="tool-ico">🪣</span><span class="tool-text">填充</span></button>
             <button class="tool-btn tb-tool" data-tool="reference" title="参考图工具 (移动/缩放参考图, 不影响拼豆)"><span class="tool-ico">🖼️</span><span class="tool-text">参考</span></button>
           </div>
-          <span class="tb-sep"></span>
           <div class="tb-group" title="撤销 / 重做">
             <button id="btn-undo" class="tb-btn" title="撤销 (↶)">↶ 撤销</button>
             <button id="btn-redo" class="tb-btn" title="重做 (↷)">↷ 重做</button>
           </div>
+          <button id="btn-lock-toggle" class="tb-btn" title="锁定已填充格子 (一次性批量锁定当前已填且未锁定的格子)">🔒 锁定已填充</button>
+          <button id="btn-highlight-toggle" class="tb-btn" title="高亮当前颜色 (突出目标格子)">✨ 高亮</button>
+
           <span class="tb-sep"></span>
-          <div class="tb-zoom" title="缩放">
-            <button id="btn-zoom-out" title="缩小">−</button>
+
+          <!-- 【参考图控制】 -->
+          <div class="tb-group tb-group-label" title="参考图控制">
+            <span class="tb-group-title">参考图</span>
+            <button id="btn-toggle-reference" class="tb-btn" title="显示 / 隐藏参考图">🖼️ 隐藏参考图</button>
+            <label class="ref-opacity-label">透明度
+              <input type="range" id="ref-opacity" min="0" max="100" value="100">
+              <span id="ref-opacity-val">100%</span>
+            </label>
+            <button id="ref-align" class="tb-btn" title="对齐画布: 参考图 1:1 对齐拼豆格子, 不改画布">🎯 对齐画布</button>
+            <button id="ref-remove" class="tb-btn" title="移除参考图">✕ 删除</button>
+            <button id="ref-mode-toggle" class="tb-btn" title="切换 分栏 / 叠加 显示模式 (只改变参考图显示方式)">⬓ 分栏/叠加</button>
+          </div>
+
+          <span class="tb-sep"></span>
+
+          <!-- 【视图控制 · 画布】 -->
+          <div class="tb-group tb-group-label" title="视图 / 画布缩放 (这是画布, 不是参考图)">
+            <span class="tb-group-title">画布</span>
+            <button id="btn-zoom-out" class="tb-btn" title="画布缩小">−</button>
             <span id="zoom-level">100%</span>
-            <button id="btn-zoom-in" title="放大">+</button>
-            <button id="btn-zoom-reset" title="恢复 100%">100%</button>
-            <button id="btn-fit" title="适应窗口">适应</button>
+            <button id="btn-zoom-in" class="tb-btn" title="画布放大">+</button>
+            <button id="btn-zoom-reset" class="tb-btn" title="画布恢复 100%">100%</button>
+            <button id="btn-fit" class="tb-btn" title="画布适应窗口">适应</button>
+            <button id="btn-toggle-grid" class="tb-btn active" title="网格线 (G)">⊞ 网格</button>
           </div>
-          <span class="tb-sep"></span>
-          <div class="tb-group" title="制作模式">
-            <button id="btn-lock-toggle" class="tb-btn" title="锁定已填充格子 (一次性批量锁定当前已填且未锁定的格子)">🔒 锁定已填充</button>
-            <button id="btn-highlight-toggle" class="tb-btn" title="高亮当前颜色 (突出目标格子)">✨ 高亮</button>
-          </div>
+
           <span class="spacer"></span>
-          <button id="btn-toggle-reference" class="tb-btn" title="显示 / 隐藏参考图">🖼️ 隐藏参考图</button>
-          <span class="info hint">🖌填色 · 🧽擦除 · ✋移动(双指可平移) · 💧吸色 · 🖼️参考(移/缩参考图) · 双指捏合缩放 / 双指拖动平移画布</span>
+          <span class="info hint">分栏/叠加只是参考图两种显示方式 · 编辑功能始终完整 · 双指捏合缩放画布 · 选「参考」工具后单指移/双指缩参考图</span>
         </div>
         <div class="workspace">
           <!-- 参考图片 (左) -->
           <div class="reference-pane hidden" id="reference-pane">
             <div class="reference-toolbar">
-              <button id="ref-zoom-out" title="缩小">−</button>
+              <span class="tb-group-title">参考图缩放</span>
+              <button id="ref-zoom-out" title="参考图缩小">−</button>
               <span id="ref-zoom-level">100%</span>
-              <button id="ref-zoom-in" title="放大">+</button>
-              <button id="ref-fit" title="适应窗口">适应</button>
-              <button id="ref-reset" title="恢复 100%">100%</button>
-              <button id="ref-mode-toggle" title="切换 分栏 / 叠加 显示模式 (叠加: 参考图覆盖在画布上)">⬓ 分栏</button>
-              <button id="ref-align" title="对齐画布: 参考图居中并适配画布范围, 保持宽高比">🎯 对齐画布</button>
-              <span class="ref-spacer"></span>
-              <label class="ref-opacity-label">透明度
-                <input type="range" id="ref-opacity" min="0" max="100" value="100">
-                <span id="ref-opacity-val">100%</span>
-              </label>
-              <button id="ref-remove" title="移除参考图">✕</button>
-              <button id="ref-hide" title="隐藏参考图">⊟</button>
+              <button id="ref-zoom-in" title="参考图放大">+</button>
+              <button id="ref-fit" title="参考图适应">适应</button>
+              <button id="ref-reset" title="参考图恢复 100%">100%</button>
             </div>
             <div class="reference-viewport" id="reference-viewport">
               <div class="reference-stage" id="reference-stage">

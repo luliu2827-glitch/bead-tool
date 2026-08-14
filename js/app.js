@@ -148,10 +148,18 @@
     this.referenceDataUrl = null;  // dataURL, 用于保存
     this.refImgW = 0;
     this.refImgH = 0;
-    this.refScale = 1;             // 参考图缩放
-    this.refOffsetX = 0;           // 参考图平移 (px)
+    this.refScale = 1;             // 参考图视口缩放 (叠加模式由网格参数推导, 分栏模式为可见值)
+    this.refOffsetX = 0;           // 参考图视口平移 (px, 同上)
     this.refOffsetY = 0;
     this.refOpacity = 1;           // 1 = 100%
+    // 网格锚定模型 (叠加模式): 参考图以"格子坐标"为锚, 随画布缩放/平移一起移动并保持像素↔格子对应
+    this.refCellX = 0;             // 参考图左上角对应的格子 X (浮点)
+    this.refCellY = 0;             // 参考图左上角对应的格子 Y (浮点)
+    this.refPerCell = 1;           // 每个格子对应多少参考图像素 (uniform, 1:1 时 = refImgW/grid.width)
+    this.refScaleExtra = 1;        // 用户额外缩放系数 (叠加模式自由缩放参考图, 默认 1 = 与画布 1:1)
+    // 拼豆板颜色 (需求七): 默认白, 可选浅灰 / 自定义
+    this.boardColor = '#ffffff';
+    this.boardColorMode = 'white'; // 'white' | 'gray' | 'custom'
     this.refDragging = false;
     this.refLastX = 0;
     this.refLastY = 0;
@@ -476,6 +484,11 @@
       sw.style.background = c.hex;
       sw.title = 'MARD ' + c.id + ' ' + colorName(c);
       sw.dataset.index = i;
+      // 紧凑底部布局也显示 MARD 色号, 方便区分相近颜色
+      var lbl = document.createElement('span');
+      lbl.className = 'mp-id';
+      lbl.textContent = c.id;
+      sw.appendChild(lbl);
       sw.addEventListener('click', function () { self.selectColor(i); });
       bar.appendChild(sw);
     });
@@ -999,9 +1012,6 @@
     document.getElementById('ref-remove').addEventListener('click', function () {
       self.refRemove();
     });
-    document.getElementById('ref-hide').addEventListener('click', function () {
-      self.toggleReferencePane();
-    });
     document.getElementById('ref-mode-toggle').addEventListener('click', function () {
       self.setOverlayMode(!self.overlayMode);
     });
@@ -1011,6 +1021,33 @@
     document.getElementById('btn-toggle-reference').addEventListener('click', function () {
       self.toggleReferencePane();
     });
+    // 拼豆板颜色 (需求七): 白 / 浅灰 / 自定义
+    var boardMode = document.getElementById('board-color-mode');
+    if (boardMode) {
+      boardMode.value = self.boardColorMode || 'white';
+      var customRow = document.getElementById('board-custom-row');
+      if (customRow) customRow.style.display = (self.boardColorMode === 'custom') ? '' : 'none';
+      var boardCustom = document.getElementById('board-color-custom');
+      if (boardCustom) boardCustom.value = self.boardColor || '#ffffff';
+      boardMode.addEventListener('change', function () {
+        var mode = this.value;
+        self.boardColorMode = mode;
+        var cr = document.getElementById('board-custom-row');
+        if (cr) cr.style.display = (mode === 'custom') ? '' : 'none';
+        if (mode === 'white') self.boardColor = '#ffffff';
+        else if (mode === 'gray') self.boardColor = '#e9e9ee';
+        else { var bc = document.getElementById('board-color-custom'); if (bc) self.boardColor = bc.value; }
+        if (self.grid) self.renderGrid();
+      });
+      if (boardCustom) boardCustom.addEventListener('input', function () {
+        self.boardColor = this.value;
+        self.boardColorMode = 'custom';
+        if (boardMode) boardMode.value = 'custom';
+        var cr = document.getElementById('board-custom-row');
+        if (cr) cr.style.display = '';
+        if (self.grid) self.renderGrid();
+      });
+    }
     // 参考图: 拖拽平移 + 滚轮缩放
     var refVp = document.getElementById('reference-viewport');
     if (refVp) {
@@ -1205,9 +1242,13 @@
     this.updateRefToggleLabel();
   };
 
+  // 将参考图变换应用到 DOM (叠加模式: 由网格锚定参数推导; 分栏模式: 沿用视口可见值)
   BeadTool.prototype.applyRefTransform = function () {
     var stage = document.getElementById('reference-stage');
     if (!stage) return;
+    if (this.overlayMode && this.referenceImage && this.grid) {
+      this.computeRefViewportTransform();
+    }
     stage.style.transform =
       'translate(' + this.refOffsetX + 'px,' + this.refOffsetY + 'px) scale(' + this.refScale + ')';
     var img = document.getElementById('reference-img');
@@ -1216,8 +1257,54 @@
     if (zl) zl.textContent = Math.round(this.refScale * 100) + '%';
   };
 
-  // 以视口内某点为焦点缩放 (鼠标滚轮/缩放按钮通用)
+  // 叠加模式: 由网格锚定参数 + 画布变换推导参考图视口变换 (参考图与格子真正对应, 缩放/平移画布时同步)
+  BeadTool.prototype.computeRefViewportTransform = function () {
+    var vp = document.getElementById('reference-viewport');
+    var container = this.canvas ? this.canvas.parentNode : null;
+    if (!vp || !container) return;
+    var vpRect = vp.getBoundingClientRect();
+    var cRect = container.getBoundingClientRect();
+    // 网格原点(格 0,0 左上角)在参考视口本地坐标中的位置
+    var ax = (cRect.left + this.panX) - vpRect.left;
+    var ay = (cRect.top + this.panY) - vpRect.top;
+    this.refScale = (this.cellSize / this.refPerCell) * this.refScaleExtra;
+    this.refOffsetX = ax + this.refCellX * this.cellSize;
+    this.refOffsetY = ay + this.refCellY * this.cellSize;
+  };
+
+  // 叠加模式: 在屏幕点 (clientX,clientY) 把额外缩放改为 newExtra, 并保持该点下的格子不动 (像素↔格子对应)
+  BeadTool.prototype.refSetScaleAt = function (clientX, clientY, newExtra) {
+    var vp = document.getElementById('reference-viewport');
+    var container = this.canvas ? this.canvas.parentNode : null;
+    if (!vp || !container) return;
+    newExtra = Math.max(0.05, Math.min(20, newExtra));
+    var vpRect = vp.getBoundingClientRect();
+    var cRect = container.getBoundingClientRect();
+    var ax = (cRect.left + this.panX) - vpRect.left;
+    var ay = (cRect.top + this.panY) - vpRect.top;
+    var curScale = (this.cellSize / this.refPerCell) * this.refScaleExtra;
+    var vx = clientX - vpRect.left, vy = clientY - vpRect.top;
+    var ix = (vx - (ax + this.refCellX * this.cellSize)) / curScale;
+    var iy = (vy - (ay + this.refCellY * this.cellSize)) / curScale;
+    var gx = this.refCellX + ix / this.refPerCell;
+    var gy = this.refCellY + iy / this.refPerCell;
+    this.refScaleExtra = newExtra;
+    if (Math.abs(newExtra - 1) < 1e-6) {
+      this.refCellX = gx - (vx - ax) / this.cellSize;
+      this.refCellY = gy - (vy - ay) / this.cellSize;
+    } else {
+      this.refCellX = (vx - ax - gx * this.cellSize * newExtra) / (this.cellSize * (1 - newExtra));
+      this.refCellY = (vy - ay - gy * this.cellSize * newExtra) / (this.cellSize * (1 - newExtra));
+    }
+    this.applyRefTransform();
+  };
+
+  // 以视口内某点为焦点缩放 (叠加模式改额外系数并锁定格子; 分栏模式改视口缩放)
   BeadTool.prototype.refZoomAt = function (clientX, clientY, factor) {
+    if (this.overlayMode && this.referenceImage && this.grid) {
+      this.refSetScaleAt(clientX, clientY, this.refScaleExtra * factor);
+      return;
+    }
     var vp = document.getElementById('reference-viewport');
     if (!vp) return;
     var rect = vp.getBoundingClientRect();
@@ -1237,7 +1324,12 @@
     this.refZoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
   };
 
+  // 参考图"适应": 叠加模式 = 1:1 对齐画布; 分栏模式 = 适配视口
   BeadTool.prototype.refFitWindow = function () {
+    if (this.overlayMode && this.referenceImage && this.grid) {
+      this.alignReferenceToCanvas();
+      return;
+    }
     var vp = document.getElementById('reference-viewport');
     if (!this.referenceImage || !vp) return;
     var rect = vp.getBoundingClientRect();
@@ -1248,7 +1340,13 @@
     this.applyRefTransform();
   };
 
+  // 参考图"100%": 叠加模式 = 复位额外缩放(保留位置); 分栏模式 = 复位视口缩放
   BeadTool.prototype.refReset100 = function () {
+    if (this.overlayMode && this.referenceImage && this.grid) {
+      this.refScaleExtra = 1;
+      this.applyRefTransform();
+      return;
+    }
     if (!this.referenceImage) return;
     var vp = document.getElementById('reference-viewport');
     var rect = vp ? vp.getBoundingClientRect() : { width: 0, height: 0 };
@@ -1281,17 +1379,29 @@
     this.refDragStartX = cx; this.refDragStartY = cy;
   };
   BeadTool.prototype.refMoveTo = function (cx, cy) {
+    if (this.overlayMode && this.referenceImage && this.grid) {
+      // 屏幕位移换算为格子位移 (1 格 = cellSize 屏幕 px), 保持像素↔格子对应
+      this.refCellX += (cx - this.refDragStartX) / this.cellSize;
+      this.refCellY += (cy - this.refDragStartY) / this.cellSize;
+      this.refDragStartX = cx; this.refDragStartY = cy;
+      this.applyRefTransform();
+      return;
+    }
     this.refOffsetX = this.refDragOriginX + (cx - this.refDragStartX);
     this.refOffsetY = this.refDragOriginY + (cy - this.refDragStartY);
     this.applyRefTransform();
   };
 
-  // 参考图双指捏合缩放 (锚定中点, 同步平移, 不改动画布)
+  // 参考图双指捏合缩放 (叠加模式锁定格子; 分栏模式原始视口缩放)
   BeadTool.prototype.refPinchStart = function (midX, midY, dist) {
-    this.refBaseScale = this.refScale;
+    this.refBaseScale = (this.overlayMode && this.grid) ? this.refScaleExtra : this.refScale;
     this._refPinchDist = dist || 1;
   };
   BeadTool.prototype.refPinchTo = function (midX, midY, dist) {
+    if (this.overlayMode && this.referenceImage && this.grid) {
+      this.refSetScaleAt(midX, midY, this.refBaseScale * (dist / this._refPinchDist));
+      return;
+    }
     var vp = document.getElementById('reference-viewport');
     if (!vp) return;
     var rect = vp.getBoundingClientRect();
@@ -1305,26 +1415,14 @@
     this.applyRefTransform();
   };
 
-  // 一键对齐画布: 参考图中心对齐画布内容中心, 尺寸适配画布范围, 保持宽高比, 不改画布
+  // 一键对齐画布: 参考图左上角对应格子 (0,0), 每个格子 = refImgW/grid.width 像素 (1:1, 保持参考图比例), 不改画布
   BeadTool.prototype.alignReferenceToCanvas = function () {
     if (!this.referenceImage) { this.toast('还没有参考图', 'warning'); return; }
-    var vp = document.getElementById('reference-viewport');
-    var container = this.canvas ? this.canvas.parentNode : null;
-    if (!vp || !container) return;
-    var vpRect = vp.getBoundingClientRect();
-    var cRect = container.getBoundingClientRect();
-    var contentW = this.grid ? this.grid.width * this.cellSize : cRect.width;
-    var contentH = this.grid ? this.grid.height * this.cellSize : cRect.height;
-    var centerX = cRect.left + this.panX + contentW / 2;
-    var centerY = cRect.top + this.panY + contentH / 2;
-    var rx = centerX - vpRect.left;
-    var ry = centerY - vpRect.top;
-    var s = Math.min(contentW / this.refImgW, contentH / this.refImgH) || 1;
-    this.refScale = s;
-    this.refOffsetX = rx - (this.refImgW * s) / 2;
-    this.refOffsetY = ry - (this.refImgH * s) / 2;
+    if (!this.grid) { this.refFitWindow(); return; }
+    this.refPerCell = this.refImgW / this.grid.width;
+    this.refCellX = 0; this.refCellY = 0; this.refScaleExtra = 1;
     this.applyRefTransform();
-    if (this.grid) this.toast('参考图已对齐画布', 'success');
+    this.toast('参考图已对齐画布', 'success');
   };
 
   BeadTool.prototype.refRemove = function () {
@@ -1383,8 +1481,9 @@
     el.textContent = name ? ('参考图: ' + name) : '未上传参考图';
   };
 
-  // 从存档恢复参考图
-  BeadTool.prototype.restoreReference = function (dataUrl, opacity, scale, ox, oy) {
+  // 从存档恢复参考图 (opts: opacity/perCell/cellX/cellY/scaleExtra/imgW/imgH; 旧档回退视口模型)
+  BeadTool.prototype.restoreReference = function (dataUrl, opts) {
+    opts = opts || {};
     var self = this;
     var img = new Image();
     img.onload = function () {
@@ -1392,10 +1491,20 @@
       self.referenceDataUrl = dataUrl;
       self.refImgW = img.naturalWidth;
       self.refImgH = img.naturalHeight;
-      self.refOpacity = (opacity == null ? 1 : opacity);
-      self.refScale = (scale == null ? 1 : scale);
-      self.refOffsetX = (ox == null ? 0 : ox);
-      self.refOffsetY = (oy == null ? 0 : oy);
+      self.refOpacity = (opts.opacity == null ? 1 : opts.opacity);
+      // 网格锚定参数 (优先), 否则回退到旧版视口缩放/平移
+      if (opts.perCell != null) {
+        self.refPerCell = opts.perCell;
+        self.refCellX = (opts.cellX == null ? 0 : opts.cellX);
+        self.refCellY = (opts.cellY == null ? 0 : opts.cellY);
+        self.refScaleExtra = (opts.scaleExtra == null ? 1 : opts.scaleExtra);
+      } else {
+        self.refPerCell = (self.grid && self.grid.width) ? self.refImgW / self.grid.width : 1;
+        self.refCellX = 0; self.refCellY = 0; self.refScaleExtra = 1;
+        self.refScale = (opts.scale == null ? 1 : opts.scale);
+        self.refOffsetX = (opts.ox == null ? 0 : opts.ox);
+        self.refOffsetY = (opts.oy == null ? 0 : opts.oy);
+      }
       self.showReferencePane();
       document.getElementById('reference-img').src = dataUrl;
       var oel = document.getElementById('ref-opacity');
@@ -1623,6 +1732,8 @@
     if (!this.canvas) return;
     this.canvas.style.transform = 'translate(' + this.panX + 'px,' + this.panY + 'px)';
     this.canvas.style.transformOrigin = '0 0';
+    // 叠加模式下, 画布平移/缩放后自动同步参考图 (保持像素↔格子对应)
+    if (this.overlayMode && this.referenceImage && this.grid) this.applyRefTransform();
   };
 
   // 约束平移边界: 保证画布至少可见 minVisible px, 不会完全移出可视区
@@ -1754,7 +1865,7 @@
     var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     var hasAnim = Object.keys(this.animCells).length > 0;
 
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = this.boardColor || '#ffffff';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     for (var y = 0; y < gh; y++) {
@@ -1841,8 +1952,8 @@
             ctx.fillText('🔒', px + 1, py + 1);
           }
         } else {
-          var isLight = (x + y) % 2 === 0;
-          ctx.fillStyle = isLight ? '#f8f8fa' : '#ececf0';
+          // 空单元格: 使用拼豆板颜色 (默认纯白, 可在侧栏设置白/浅灰/自定义)
+          ctx.fillStyle = this.boardColor || '#ffffff';
           ctx.fillRect(px, py, cs, cs);
         }
       }
@@ -2300,9 +2411,14 @@
       paletteId: this.paletteId,
       referenceDataUrl: this.referenceDataUrl,
       refOpacity: this.refOpacity,
-      refScale: this.refScale,
-      refOffsetX: this.refOffsetX,
-      refOffsetY: this.refOffsetY,
+      refPerCell: this.refPerCell,
+      refCellX: this.refCellX,
+      refCellY: this.refCellY,
+      refScaleExtra: this.refScaleExtra,
+      refImgW: this.refImgW,
+      refImgH: this.refImgH,
+      boardColor: this.boardColor,
+      boardColorMode: this.boardColorMode,
       timestamp: Date.now()
     };
     // 优先 IndexedDB (可保存参考图片); 不支持时回退 localStorage
@@ -2351,7 +2467,19 @@
       self.updateUndoRedoButtons();
       // 参考图
       if (data.referenceDataUrl) {
-        self.restoreReference(data.referenceDataUrl, data.refOpacity, data.refScale, data.refOffsetX, data.refOffsetY);
+        self.restoreReference(data.referenceDataUrl, {
+          opacity: data.refOpacity,
+          perCell: data.refPerCell,
+          cellX: data.refCellX,
+          cellY: data.refCellY,
+          scaleExtra: data.refScaleExtra,
+          imgW: data.refImgW,
+          imgH: data.refImgH,
+          scale: data.refScale,
+          ox: data.refOffsetX,
+          oy: data.refOffsetY
+        });
+        if (data.boardColor) { self.boardColor = data.boardColor; self.boardColorMode = data.boardColorMode || 'custom'; }
       }
       self.updateStats();
       if (!silent) self.toast('存档已读取: ' + data.width + 'x' + data.height, 'success');

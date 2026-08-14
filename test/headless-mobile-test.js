@@ -673,6 +673,67 @@ eq('画布≤视口: 自由平移 panX 不被强制居中', bt.panX, 300);
 eq('画布≤视口: 自由平移 panY 不被强制居中', bt.panY, 200);
 
 // ===========================================================================
+console.log('\n=== (新增) 顶部统一缩放 (随工具切换目标) + 窄窗口叠加 CSS 修复 ===');
+// zoomTarget: 参考图工具 -> ref, 其他(含移动画布) -> canvas
+resetGrid();
+bt.selectTool('move');
+eq('移动画布工具 -> zoomTarget=canvas', bt.zoomTarget(), 'canvas');
+bt.selectTool('reference');
+eq('参考工具 -> zoomTarget=ref', bt.zoomTarget(), 'ref');
+bt.selectTool('paint');
+eq('填色工具 -> zoomTarget=canvas', bt.zoomTarget(), 'canvas');
+
+// 画布百分比缩放: 只改 cellSize, 不动参考图
+resetGrid();
+bt.cellSize = 30; bt.baseCellSize = 20; bt.panX = 0; bt.panY = 0;
+bt.referenceImage = { naturalWidth: 100, naturalHeight: 100 };
+bt.refImgW = 100; bt.refImgH = 100;
+bt.refScale = 1; bt.refX = 0; bt.refY = 0;
+bt.selectTool('move');
+bt.zoomToPercent(125);
+ok('zoomToPercent(125) -> cellSize = 25 (20*1.25)', Math.abs(bt.cellSize - 25) < 1e-9);
+eq('zoomToPercent 不改参考图 refScale', bt.refScale, 1);
+eq('zoomToPercent 不改参考图 refX', bt.refX, 0);
+
+// 参考图百分比缩放: 只改 refScale/refX/refY, 不动画布
+resetGrid();
+bt.cellSize = 30; bt.baseCellSize = 20; bt.panX = 10; bt.panY = 20;
+bt.referenceImage = { naturalWidth: 100, naturalHeight: 100 };
+bt.refImgW = 100; bt.refImgH = 100;
+bt.refScale = 1; bt.refX = 0; bt.refY = 0;
+bt.selectTool('reference');
+bt.refZoomToPercent(57);
+ok('refZoomToPercent(57) -> refScale = 0.57', Math.abs(bt.refScale - 0.57) < 1e-9);
+eq('refZoomToPercent 不改画布 cellSize', bt.cellSize, 30);
+eq('refZoomToPercent 不改画布 panX', bt.panX, 10);
+eq('refZoomToPercent 不改画布 panY', bt.panY, 20);
+
+// updateZoomLabel: 目标标签随工具切换
+bt.selectTool('move');
+bt.updateZoomLabel();
+eq('移动画布工具 -> 标签=画布', byId['zoom-target-label'].textContent, '画布');
+bt.selectTool('reference');
+bt.updateZoomLabel();
+eq('参考工具 -> 标签=参考图', byId['zoom-target-label'].textContent, '参考图');
+
+// HTML: 顶部一套统一缩放 (zoom-level 为输入框) + 浮动参考缩放条已移除
+ok('顶部统一缩放: zoom-target-label + zoom-level 输入框存在',
+   html.indexOf('id="zoom-target-label"') !== -1 &&
+   html.indexOf('id="zoom-level"') !== -1 &&
+   html.indexOf('class="zoom-input"') !== -1);
+ok('浮动参考图缩放条已移除 (无 ref-zoom-in / ref-zoom-level)',
+   html.indexOf('id="ref-zoom-in"') === -1 && html.indexOf('id="ref-zoom-level"') === -1);
+
+// 窄窗口叠加修复 (CSS): 窄屏媒体规则仅作用分栏模式 + 叠加面板强制 height:auto
+const cssText = read('css/style.css');
+ok('窄屏媒体规则限定分栏模式 (workspace:not(.overlay-mode))',
+   cssText.indexOf('.workspace:not(.overlay-mode)') !== -1);
+var overlayRefStart = cssText.indexOf('.workspace.overlay-mode .reference-pane');
+var overlayRefCss = cssText.slice(overlayRefStart, overlayRefStart + 400);
+ok('叠加参考面板强制 height:auto (窄窗口不裁剪为 40%)',
+   overlayRefStart !== -1 && overlayRefCss.indexOf('height: auto') !== -1);
+
+// ===========================================================================
 console.log('\n=== RESULT ===');
 console.log('  PASS: ' + pass + '   FAIL: ' + fail);
 if (fail > 0) {

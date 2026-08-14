@@ -608,6 +608,7 @@
     } else {
       this.canvas.classList.add('tool-' + tool);
     }
+    this.updateZoomLabel();   // 切工具后刷新顶部统一缩放的目标标签与百分比
   };
 
   BeadTool.prototype.setMode = function (mode) {
@@ -745,17 +746,42 @@
       self.createBlankGrid(null, null, true);
     });
 
-    // --- 顶栏按钮 ---
+    // --- 顶部统一缩放 (随当前工具切换目标: 参考图工具->参考图, 其他->画布) ---
     document.getElementById('btn-zoom-in').addEventListener('click', function () {
-      self.zoomCenter(1.25);
+      if (self.zoomTarget() === 'ref') self.refZoomCenter(1.25);
+      else self.zoomCenter(1.25);
     });
     document.getElementById('btn-zoom-out').addEventListener('click', function () {
-      self.zoomCenter(1 / 1.25);
+      if (self.zoomTarget() === 'ref') self.refZoomCenter(1 / 1.25);
+      else self.zoomCenter(1 / 1.25);
     });
     var fitBtn = document.getElementById('btn-fit');
-    if (fitBtn) fitBtn.addEventListener('click', function () { self.fitCanvas(); });
+    if (fitBtn) fitBtn.addEventListener('click', function () {
+      if (self.zoomTarget() === 'ref') self.refFitWindow();
+      else self.fitCanvas();
+    });
     var resetBtn = document.getElementById('btn-zoom-reset');
-    if (resetBtn) resetBtn.addEventListener('click', function () { self.resetZoom100(); });
+    if (resetBtn) resetBtn.addEventListener('click', function () {
+      if (self.zoomTarget() === 'ref') self.refReset100();
+      else self.resetZoom100();
+    });
+    // 直接输入百分比 (如 37% / 57% / 100% / 125%), 回车或失焦应用
+    var zlInput = document.getElementById('zoom-level');
+    if (zlInput) {
+      var applyZoomPercent = function () {
+        var raw = String(zlInput.value || '').replace(/%/g, '').trim();
+        var pct = parseFloat(raw);
+        if (!isNaN(pct) && pct > 0) {
+          if (self.zoomTarget() === 'ref') self.refZoomToPercent(pct);
+          else self.zoomToPercent(pct);
+        }
+        self.updateZoomLabel();
+      };
+      zlInput.addEventListener('change', applyZoomPercent);
+      zlInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); applyZoomPercent(); zlInput.blur(); }
+      });
+    }
     document.getElementById('btn-toggle-grid').addEventListener('click', function () {
       self.showGrid = !self.showGrid;
       this.classList.toggle('active', self.showGrid);
@@ -988,18 +1014,6 @@
     document.getElementById('btn-ref-upload-side').addEventListener('click', openRef);
     if (refFile) refFile.addEventListener('change', function (e) {
       if (e.target.files[0]) self.loadReferenceFile(e.target.files[0]);
-    });
-    document.getElementById('ref-zoom-in').addEventListener('click', function () {
-      self.refZoomCenter(1.2);
-    });
-    document.getElementById('ref-zoom-out').addEventListener('click', function () {
-      self.refZoomCenter(1 / 1.2);
-    });
-    document.getElementById('ref-fit').addEventListener('click', function () {
-      self.refFitWindow();
-    });
-    document.getElementById('ref-reset').addEventListener('click', function () {
-      self.refReset100();
     });
     var refOpacity = document.getElementById('ref-opacity');
     if (refOpacity) refOpacity.addEventListener('input', function () {
@@ -1341,8 +1355,7 @@
       'translate(' + this.refX + 'px,' + this.refY + 'px) scale(' + this.refScale + ')';
     var img = document.getElementById('reference-img');
     if (img) img.style.opacity = this.refOpacity;
-    var zl = document.getElementById('ref-zoom-level');
-    if (zl) zl.textContent = Math.round(this.refScale * 100) + '%';
+    this.updateZoomLabel();   // 顶部统一缩放百分比 (参考图工具激活时显示参考图缩放)
   };
 
   // 以 workspace 内某点为焦点缩放参考图 (不依赖 overlayMode, 不改动画布)
@@ -1855,11 +1868,47 @@
     this.updateZoomLabel();
   };
 
+  // 顶部统一缩放: 目标对象由当前工具决定 (参考图工具 -> 参考图, 其他工具含移动画布 -> 画布)
+  BeadTool.prototype.zoomTarget = function () {
+    return (this.tool === 'reference') ? 'ref' : 'canvas';
+  };
+
   BeadTool.prototype.updateZoomLabel = function () {
     var el = document.getElementById('zoom-level');
+    var lbl = document.getElementById('zoom-target-label');
     if (!el) return;
+    var target = this.zoomTarget();
+    var pct;
+    if (target === 'ref') {
+      pct = Math.round(this.refScale * 100);
+    } else {
+      var base = this.baseCellSize || 20;
+      pct = Math.round(this.cellSize / base * 100);
+    }
+    if (lbl) lbl.textContent = (target === 'ref') ? '参考图' : '画布';
+    el.value = pct + '%';
+  };
+
+  // 顶部统一缩放: 直接设置画布缩放百分比 (锚定容器中心, 不改参考图)
+  BeadTool.prototype.zoomToPercent = function (pct) {
+    if (!this.grid) return;
     var base = this.baseCellSize || 20;
-    el.textContent = Math.round(this.cellSize / base * 100) + '%';
+    var container = this.canvas.parentNode;
+    if (!container) return;
+    var crect = container.getBoundingClientRect();
+    this.zoomToSize(base * pct / 100, crect.left + crect.width / 2, crect.top + crect.height / 2);
+  };
+
+  // 顶部统一缩放: 直接设置参考图缩放百分比 (锚定参考图中心, 不改画布)
+  BeadTool.prototype.refZoomToPercent = function (pct) {
+    if (!this.referenceImage) return;
+    var newScale = Math.max(0.02, Math.min(50, pct / 100));
+    var cx = this.refX + (this.refImgW * this.refScale) / 2;
+    var cy = this.refY + (this.refImgH * this.refScale) / 2;
+    this.refScale = newScale;
+    this.refX = cx - (this.refImgW * newScale) / 2;
+    this.refY = cy - (this.refImgH * newScale) / 2;
+    this.applyRefTransform();
   };
 
   // 由客户端坐标计算格子 (供鼠标/触摸共用)

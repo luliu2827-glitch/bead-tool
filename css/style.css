@@ -1129,6 +1129,31 @@ body {
   border-right: none;
   margin-right: 0;
 }
+
+/* 顶部统一缩放: 目标标签 + 可输入百分比 */
+.zoom-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: 2px;
+}
+.zoom-input {
+  width: 56px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+}
+.zoom-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-light);
+}
 .canvas-toolbar .info.hint {
   color: var(--text-muted);
   font-size: 11px;
@@ -1273,6 +1298,7 @@ body {
   right: 0;
   bottom: 0;
   width: auto;
+  height: auto;   /* 覆盖窄屏媒体规则的 height:40%, 保证叠加模式始终铺满整个视口 */
   min-width: 0;
   z-index: 5;
   background: transparent;
@@ -1413,10 +1439,10 @@ body {
   color: #fff;
 }
 
-/* 窄屏: 参考图与画布上下排列 */
+/* 窄屏: 仅分栏模式下参考图与画布上下排列 (叠加模式始终同一视口, 不受窄屏影响) */
 @media (max-width: 900px) {
-  .workspace { flex-direction: column; }
-  .reference-pane {
+  .workspace:not(.overlay-mode) { flex-direction: column; }
+  .workspace:not(.overlay-mode) .reference-pane {
     width: 100%;
     max-width: none;
     min-width: 0;

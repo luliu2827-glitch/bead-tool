@@ -266,14 +266,15 @@
 
           <span class="tb-sep"></span>
 
-          <!-- 【视图控制 · 画布】 -->
-          <div class="tb-group tb-group-label" title="视图 / 画布缩放 (这是画布, 不是参考图)">
-            <span class="tb-group-title">画布</span>
-            <button id="btn-zoom-out" class="tb-btn" title="画布缩小">−</button>
-            <span id="zoom-level">100%</span>
-            <button id="btn-zoom-in" class="tb-btn" title="画布放大">+</button>
-            <button id="btn-zoom-reset" class="tb-btn" title="画布恢复 100%">100%</button>
-            <button id="btn-fit" class="tb-btn" title="画布适应窗口">适应</button>
+          <!-- 【视图 · 缩放】统一缩放: 随当前工具切换操作对象 (移动画布→画布 / 参考→参考图) -->
+          <div class="tb-group tb-group-label" title="缩放: 随当前工具切换操作对象 (移动画布→画布 / 参考→参考图); 可直接输入百分比回车应用">
+            <span class="tb-group-title">缩放</span>
+            <button id="btn-zoom-out" class="tb-btn" title="缩小当前对象">−</button>
+            <span class="zoom-label" id="zoom-target-label">画布</span>
+            <input id="zoom-level" class="zoom-input" type="text" inputmode="decimal" value="100%" title="输入百分比后回车应用, 如 37% / 57% / 100% / 125%">
+            <button id="btn-zoom-in" class="tb-btn" title="放大当前对象">+</button>
+            <button id="btn-zoom-reset" class="tb-btn" title="当前对象恢复 100%">100%</button>
+            <button id="btn-fit" class="tb-btn" title="当前对象适应窗口">适应</button>
             <button id="btn-toggle-grid" class="tb-btn active" title="网格线 (G)">⊞ 网格</button>
           </div>
 
@@ -283,14 +284,6 @@
         <div class="workspace" id="workspace">
           <!-- 参考图片 (左) -->
           <div class="reference-pane hidden" id="reference-pane">
-            <div class="reference-toolbar">
-              <span class="tb-group-title">参考图缩放</span>
-              <button id="ref-zoom-out" title="参考图缩小">−</button>
-              <span id="ref-zoom-level">100%</span>
-              <button id="ref-zoom-in" title="参考图放大">+</button>
-              <button id="ref-fit" title="参考图适应">适应</button>
-              <button id="ref-reset" title="参考图恢复 100%">100%</button>
-            </div>
             <div class="reference-viewport" id="reference-viewport">
               <div class="reference-stage" id="reference-stage">
                 <img id="reference-img" alt="参考图片">

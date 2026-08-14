@@ -415,37 +415,39 @@ eq('single-finger action works after full release (isDragging true)', bt.isDragg
 bt.isDragging = false;
 
 // ===========================================================================
-console.log('\n=== (十一) Tool consistency (5 tools) + BIEF fix ===');
-const tools = ['paint', 'eraser', 'move', 'eyedropper', 'fill'];
+console.log('\n=== (十一) Tool consistency (6 tools) + BIEF fix ===');
+const tools = ['paint', 'eraser', 'unlock', 'move', 'eyedropper', 'fill'];
 tools.forEach(function (tl) {
   bt.selectTool(tl);
   eq('selectTool("' + tl + '") sets this.tool', bt.tool, tl);
 });
-eq('exactly 5 distinct tools', tools.length, 5);
+eq('exactly 6 distinct tools', tools.length, 6);
 
 const html = read('index.html');
-ok('tool buttons use data-tool for all 5 (paint/eraser/move/eyedropper/fill)',
-   ['paint', 'eraser', 'move', 'eyedropper', 'fill'].every(function (k) {
+ok('tool buttons use data-tool for all 6 (paint/eraser/unlock/move/eyedropper/fill)',
+   ['paint', 'eraser', 'unlock', 'move', 'eyedropper', 'fill'].every(function (k) {
      return html.indexOf('data-tool="' + k + '"') !== -1;
    }));
 // eraser also exists in the sidebar, so scope the check to the TOP toolbar only
 var tbStart = html.indexOf('class="canvas-toolbar"');
 var topToolbar = html.slice(tbStart, tbStart + 2000);
-ok('top canvas toolbar has all 6 edit tools incl 填充 (data-tool="fill")',
-   ['paint', 'eraser', 'move', 'eyedropper', 'fill', 'reference'].every(function (k) {
+ok('top canvas toolbar has all 7 tools incl 解锁 + 参考 (data-tool)',
+   ['paint', 'eraser', 'unlock', 'move', 'eyedropper', 'fill', 'reference'].every(function (k) {
      return topToolbar.indexOf('data-tool="' + k + '"') !== -1;
    }));
 ok('顶部工具栏三组清晰分组: 拼豆编辑 / 参考图 / 画布',
    topToolbar.indexOf('拼豆编辑') !== -1 && topToolbar.indexOf('参考图') !== -1 && topToolbar.indexOf('画布') !== -1);
 ok('顶部工具栏区分画布缩放与参考图控制 (ref-mode-toggle 在顶栏)', html.indexOf('id="ref-mode-toggle"') !== -1);
 ok('BIEF misleading label removed (no "B/I/E/F")', html.indexOf('B/I/E/F') === -1);
-ok('tool heading now lists 5 names (画笔·橡皮·移动·吸管·填充)',
-   html.indexOf('画笔 · 橡皮 · 移动 · 吸管 · 填充') !== -1);
+ok('tool heading now lists 6 names (画笔·橡皮·解锁·移动·吸管·填充)',
+   html.indexOf('画笔 · 橡皮 · 解锁 · 移动 · 吸管 · 填充') !== -1);
 ok('undo button present (btn-undo)', html.indexOf('id="btn-undo"') !== -1);
 ok('redo button present (btn-redo)', html.indexOf('id="btn-redo"') !== -1);
 ok('lock toggle present (btn-lock-toggle)', html.indexOf('id="btn-lock-toggle"') !== -1);
+ok('按颜色解锁 button present (btn-unlock-by-color)', html.indexOf('id="btn-unlock-by-color"') !== -1);
 ok('highlight toggle present (btn-highlight-toggle)', html.indexOf('id="btn-highlight-toggle"') !== -1);
 ok('sidebar ☰ toggle present (btn-toggle-sidebar)', html.indexOf('id="btn-toggle-sidebar"') !== -1);
+ok('canvas-container has id (参考图工具容器层手势)', html.indexOf('id="canvas-container"') !== -1);
 
 // ===========================================================================
 console.log('\n=== (七/九) Mobile bottom MARD palette bar ===');
@@ -512,6 +514,62 @@ eq('filled locked cell (6,6) stays 1', bt.grid.cells[6 * 8 + 6], 1);
 bt.selectedColorIndex = 8;
 const rEmpty = bt.paintCell(7, 7);
 eq('empty cell paintable even though another cell is locked', rEmpty, true);
+
+// ===========================================================================
+console.log('\n=== (新增) 解锁: 单格解锁工具 + 按颜色解锁 ===');
+resetGrid();
+// 造一个「已填 + 已锁定」的格子
+bt.selectedColorIndex = 2;
+bt.beginStroke(); bt.paintCell(3, 3); bt.endStroke();   // cells[3,3] = 2
+bt.grid.locks[3 * 8 + 3] = 1;                            // 直接锁它 (模拟 lockFilledCells 后的状态)
+bt.undoStack = []; bt.redoStack = [];                     // 清空历史, 让「解锁」成为唯一可撤销条目
+eq('前置: 格子(3,3) 已锁定', bt.grid.locks[3 * 8 + 3], 1);
+
+// 单格解锁 (通过工具方法): 只清锁, 保留颜色, 进入撤销历史
+bt.selectTool('unlock');
+eq('selectTool("unlock") 选中解锁工具', bt.tool, 'unlock');
+bt.beginStroke();
+var rUnlock = bt.unlockCell(3, 3);
+bt.endStroke();
+eq('unlockCell 返回 true (成功解锁)', rUnlock, true);
+eq('解锁后 locks[3,3] = 0', bt.grid.locks[3 * 8 + 3], 0);
+eq('解锁后颜色保留 (cells[3,3] 仍 = 2)', bt.grid.cells[3 * 8 + 3], 2);
+eq('解锁进入撤销历史 (1 条)', bt.undoStack.length, 1);
+
+// 撤销解锁 -> 恢复锁定
+bt.undo();
+eq('撤销解锁后 locks[3,3] 恢复 = 1', bt.grid.locks[3 * 8 + 3], 1);
+eq('撤销解锁后颜色仍保留 (cells[3,3] = 2)', bt.grid.cells[3 * 8 + 3], 2);
+bt.redo();
+eq('重做解锁后 locks[3,3] = 0', bt.grid.locks[3 * 8 + 3], 0);
+
+// 解锁未锁定格子: 无操作, 不产生历史
+resetGrid();
+bt.beginStroke();
+var rUnlock2 = bt.unlockCell(0, 0);
+bt.endStroke();
+eq('解锁未锁定格子返回 false', rUnlock2, false);
+eq('解锁未锁定格子不产生撤销历史', bt.undoStack.length, 0);
+
+// 按颜色解锁: 只解「已锁定且颜色等于当前选中颜色」的格子
+resetGrid();
+bt.selectedColorIndex = 2;
+bt.beginStroke(); bt.paintCell(0, 0); bt.endStroke();   // cells[0] = 2 (色2)
+bt.beginStroke(); bt.paintCell(1, 0); bt.endStroke();   // cells[1] = 2 (色2)
+bt.selectedColorIndex = 5;
+bt.beginStroke(); bt.paintCell(2, 0); bt.endStroke();   // cells[2] = 5 (色5)
+bt.grid.locks[0] = 1; bt.grid.locks[1] = 1; bt.grid.locks[2] = 1;   // 三个都锁
+bt.undoStack = []; bt.redoStack = [];                                 // 清空历史
+bt.selectedColorIndex = 2;   // 选色2 -> 应只解 cells[0] 与 cells[1]
+bt.unlockByColor();
+eq('按颜色解锁: cells[0] (色2) 解锁', bt.grid.locks[0], 0);
+eq('按颜色解锁: cells[1] (色2) 解锁', bt.grid.locks[1], 0);
+eq('按颜色解锁: cells[2] (色5) 仍锁定', bt.grid.locks[2], 1);
+eq('按颜色解锁: cells[2] 颜色保留 (仍=5)', bt.grid.cells[2], 5);
+eq('按颜色解锁进入撤销历史', bt.undoStack.length, 1);
+bt.undo();
+eq('撤销按颜色解锁: cells[0] 恢复锁定', bt.grid.locks[0], 1);
+eq('撤销按颜色解锁: cells[1] 恢复锁定', bt.grid.locks[1], 1);
 
 // ===========================================================================
 console.log('\n=== (十六#22) Desktop mouse handlers still bound ===');

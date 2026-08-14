@@ -113,7 +113,7 @@
 
     // 工具状态
     this.selectedColorIndex = 0;
-    this.tool = 'paint';   // paint, eyedropper, eraser, fill
+    this.tool = 'paint';   // paint, eyedropper, eraser, fill, unlock, move, reference
     this.mode = 'edit';    // edit, progress
 
     // 当前色卡
@@ -573,6 +573,28 @@
     }
   };
 
+  // 按颜色解锁: 一次解除所有「已锁定且颜色等于当前选中颜色」的格子 (进入撤销历史, 非唯一解锁方式)
+  BeadTool.prototype.unlockByColor = function () {
+    if (!this.grid) { this.toast('没有可解锁的画布', 'warning'); return; }
+    var ci = this.selectedColorIndex;
+    this.beginStroke();
+    var n = 0;
+    for (var i = 0; i < this.grid.cells.length; i++) {
+      if (this.grid.locks[i] === 1 && this.grid.cells[i] === ci) {
+        this.grid.locks[i] = 0;
+        this._strokeChanged = true;
+        n++;
+      }
+    }
+    this.endStroke();
+    this.renderGrid();
+    if (n > 0) {
+      this.toast('已解锁 ' + n + ' 个 MARD ' + this.palette[ci].id + ' 的格子', 'success');
+    } else {
+      this.toast('没有「已锁定且颜色为 ' + this.palette[ci].id + '」的格子', 'info');
+    }
+  };
+
   // ========== 工具选择 ==========
 
   BeadTool.prototype.selectTool = function (tool) {
@@ -761,6 +783,10 @@
     if (lockBtn) lockBtn.addEventListener('click', function () {
       self.lockFilledCells();
     });
+    var unlockColorBtn = document.getElementById('btn-unlock-by-color');
+    if (unlockColorBtn) unlockColorBtn.addEventListener('click', function () {
+      self.unlockByColor();
+    });
     var hlBtn = document.getElementById('btn-highlight-toggle');
     if (hlBtn) hlBtn.addEventListener('click', function () {
       self.highlightCurrent = !self.highlightCurrent;
@@ -794,11 +820,9 @@
     });
     this.canvas.addEventListener('wheel', function (e) {
       e.preventDefault();
-      if (self.tool === 'reference') {
-        self.refZoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
-      } else {
-        self.zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
-      }
+      // 参考图工具的滚轮缩放由画布容器层统一处理 (覆盖整个视口), 这里只处理画布缩放
+      if (self.tool === 'reference') return;
+      self.zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
     }, { passive: false });
 
     // 全局 mouseup: 在画布外松开也能结束平移 / 拖画
@@ -811,16 +835,9 @@
       self._suppressMouseUntil = Date.now() + 700;
       self._touchCount = e.touches.length;
       if (e.touches.length >= 2) self._multiTouch = true;
+      // 参考图工具的手势由画布容器层统一处理 (覆盖整个视口), 这里不再处理
+      if (self.tool === 'reference') return;
       if (e.touches.length === 2) {
-        if (self.tool === 'reference') {
-          // 参考图工具: 双指捏合 = 缩放参考图 (不动画布)
-          self.isRefPinching = true; self.touchMoved = true;
-          var rmx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-          var rmy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-          var rdist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY) || 1;
-          self.refPinchStart(rmx, rmy, rdist);
-          return;
-        }
         self.isPanning = false; self.isDragging = false; self.isPinching = true; self.touchMoved = true;
         var dx = e.touches[0].clientX - e.touches[1].clientX;
         var dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -841,11 +858,7 @@
         self.isPanning = true;
         self.panStartX = t.clientX; self.panStartY = t.clientY;
         self.panOriginX = self.panX; self.panOriginY = self.panY;
-      } else if (self.tool === 'reference') {
-        // 参考图工具: 单指拖动 = 移动参考图 (不改格子 / 不动画布)
-        self.isRefMoving = true;
-        self.refMoveStart(t.clientX, t.clientY);
-      } else if (self.tool === 'paint' || self.tool === 'eraser') {
+      } else if (self.tool === 'paint' || self.tool === 'eraser' || self.tool === 'unlock') {
         self.isDragging = true; self.dragStartButton = 0; self.lastPaintedIdx = -1;
         self.beginStroke();  // 一次笔画开始 (可能是单击或拖动)
       }
@@ -854,17 +867,9 @@
     this.canvas.addEventListener('touchmove', function (e) {
       e.preventDefault();
       self._touchCount = e.touches.length;
+      // 参考图工具的手势由容器层处理, 这里只处理画布相关手势
+      if (self.tool === 'reference') return;
       if (self.isPinching && e.touches.length >= 2) {
-        if (self.isRefPinching) {
-          // 参考图工具: 双指捏合缩放参考图
-          var rdx = e.touches[0].clientX - e.touches[1].clientX;
-          var rdy = e.touches[0].clientY - e.touches[1].clientY;
-          var rdist = Math.hypot(rdx, rdy) || 1;
-          var rmidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-          var rmidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-          self.refPinchTo(rmidX, rmidY, rdist);
-          return;
-        }
         var dx = e.touches[0].clientX - e.touches[1].clientX;
         var dy = e.touches[0].clientY - e.touches[1].clientY;
         var dist = Math.hypot(dx, dy) || 1;
@@ -895,15 +900,14 @@
         if (Math.abs(t2.clientX - self.touchStartX) > 6 || Math.abs(t2.clientY - self.touchStartY) > 6) {
           self.touchMoved = true;
         }
-        if (self.isRefMoving && self.tool === 'reference') {
-          self.refMoveTo(t2.clientX, t2.clientY);
-        } else if (self.isDragging && (self.tool === 'paint' || self.tool === 'eraser')) {
+        if (self.isDragging && (self.tool === 'paint' || self.tool === 'eraser' || self.tool === 'unlock')) {
           var cell = self.getCellFromClient(t2.clientX, t2.clientY);
           if (cell) {
             var idx = cell.y * self.grid.width + cell.x;
             if (idx !== self.lastPaintedIdx) {
               if (self.tool === 'paint') { self.paintCell(cell.x, cell.y); self.lastPaintedIdx = idx; }
               else if (self.tool === 'eraser') { self.eraseCell(cell.x, cell.y); self.lastPaintedIdx = idx; }
+              else if (self.tool === 'unlock') { self.unlockCell(cell.x, cell.y); self.lastPaintedIdx = idx; }
             }
           }
         }
@@ -913,13 +917,13 @@
     this.canvas.addEventListener('touchend', function (e) {
       e.preventDefault();
       self._touchCount = e.touches.length;
+      // 参考图工具的手势由容器层处理, 这里只处理画布相关手势
+      if (self.tool === 'reference') return;
       if (self.isPinching) {
         if (e.touches.length < 2) { self.isPinching = false; self.touchMoved = true; } else return;
       }
       if (self.isPanning) self.isPanning = false;
-      if (self.isRefMoving) self.isRefMoving = false;
-      if (self.isRefPinching && e.touches.length < 2) self.isRefPinching = false;
-      if (self.isDragging && (self.tool === 'paint' || self.tool === 'eraser')) {
+      if (self.isDragging && (self.tool === 'paint' || self.tool === 'eraser' || self.tool === 'unlock')) {
         self.isDragging = false; self.lastPaintedIdx = -1; self.dragStartButton = -1;
         self.endStroke();
       }
@@ -932,6 +936,7 @@
           else if (self.tool === 'fill') { self.beginStroke(); self.fillCell(cell.x, cell.y); self.endStroke(); }
           else if (self.tool === 'paint') { self.beginStroke(); self.paintCell(cell.x, cell.y); self.endStroke(); }
           else if (self.tool === 'eraser') { self.beginStroke(); self.eraseCell(cell.x, cell.y); self.endStroke(); }
+          else if (self.tool === 'unlock') { self.beginStroke(); self.unlockCell(cell.x, cell.y); self.endStroke(); }
         }
       }
       self.touchMoved = false;
@@ -1112,6 +1117,97 @@
       });
     }
 
+    // 参考图工具: 绑定到画布容器 (叠加模式下铺满整个视口), 使参考图可在任意位置独立移动/缩放。
+    // canvas 层的手势在 tool==='reference' 时直接返回, 交由这里统一处理 (鼠标/滚轮/触摸)。
+    var ccontainer = document.getElementById('canvas-container');
+    if (ccontainer) {
+      // 鼠标拖动 = 移动参考图 (用 document 级 mousemove/mouseup 保证拖出容器也连续)
+      ccontainer.addEventListener('mousedown', function (e) {
+        if (self.tool !== 'reference') return;
+        e.preventDefault();
+        self.isRefMoving = true;
+        self.refMoveStart(e.clientX, e.clientY);
+        var move = function (ev) {
+          if (!self.isRefMoving) return;
+          self.refMoveTo(ev.clientX, ev.clientY);
+        };
+        var up = function () {
+          self.isRefMoving = false;
+          document.removeEventListener('mousemove', move);
+          document.removeEventListener('mouseup', up);
+        };
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', up);
+      });
+      // 滚轮 = 缩放参考图
+      ccontainer.addEventListener('wheel', function (e) {
+        if (self.tool !== 'reference') return;
+        e.preventDefault();
+        self.refZoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+      }, { passive: false });
+      // 触摸: 单指移动参考图, 双指捏合缩放参考图
+      ccontainer.addEventListener('touchstart', function (e) {
+        if (self.tool !== 'reference') return;
+        e.preventDefault();
+        self._touchActive = true;
+        self._suppressMouseUntil = Date.now() + 700;
+        self._touchCount = e.touches.length;
+        if (e.touches.length >= 2) self._multiTouch = true;
+        if (e.touches.length === 2) {
+          self.isRefPinching = true; self.touchMoved = true;
+          var rmx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          var rmy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          var rdist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY) || 1;
+          self.refPinchStart(rmx, rmy, rdist);
+          return;
+        }
+        var t = e.touches[0];
+        self.touchStartX = t.clientX; self.touchStartY = t.clientY; self.touchMoved = false;
+        if (self._multiTouch) return;
+        self.isRefMoving = true;
+        self.refMoveStart(t.clientX, t.clientY);
+      }, { passive: false });
+      ccontainer.addEventListener('touchmove', function (e) {
+        if (self.tool !== 'reference') return;
+        e.preventDefault();
+        self._touchCount = e.touches.length;
+        if (self.isRefPinching && e.touches.length >= 2) {
+          var rdx = e.touches[0].clientX - e.touches[1].clientX;
+          var rdy = e.touches[0].clientY - e.touches[1].clientY;
+          var rdist = Math.hypot(rdx, rdy) || 1;
+          var rmidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          var rmidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          self.refPinchTo(rmidX, rmidY, rdist);
+          return;
+        }
+        if (e.touches.length === 1 && !self._multiTouch) {
+          var t2 = e.touches[0];
+          if (Math.abs(t2.clientX - self.touchStartX) > 6 || Math.abs(t2.clientY - self.touchStartY) > 6) {
+            self.touchMoved = true;
+          }
+          if (self.isRefMoving) {
+            self.refMoveTo(t2.clientX, t2.clientY);
+          }
+        }
+      }, { passive: false });
+      ccontainer.addEventListener('touchend', function (e) {
+        if (self.tool !== 'reference') return;
+        e.preventDefault();
+        self._touchCount = e.touches.length;
+        if (self.isRefMoving) self.isRefMoving = false;
+        if (self.isRefPinching && e.touches.length < 2) self.isRefPinching = false;
+        self._touchActive = false;
+        self._suppressMouseUntil = Date.now() + 700;
+        if (self._touchCount === 0) self._multiTouch = false;
+      }, { passive: false });
+      ccontainer.addEventListener('touchcancel', function () {
+        if (self.tool !== 'reference') return;
+        self.isRefMoving = false;
+        self.isRefPinching = false;
+        self._multiTouch = false;
+      });
+    }
+
     // --- 进度操作 ---
     var pa = document.getElementById('progress-actions');
     if (pa) {
@@ -1145,6 +1241,7 @@
         case 'i': self.selectTool('eyedropper'); break;
         case 'e': self.selectTool('eraser'); break;
         case 'f': self.selectTool('fill'); break;
+        case 'u': self.selectTool('unlock'); break;
         case 'g':
           self.showGrid = !self.showGrid;
           document.getElementById('btn-toggle-grid').classList.toggle('active', self.showGrid);
@@ -1937,13 +2034,8 @@
       e.preventDefault();
       return;
     }
-    // 参考图工具: 左键拖动 = 移动参考图 (不填色 / 不动画布)
-    if (this.tool === 'reference') {
-      this.isRefMoving = true;
-      this.refMoveStart(e.clientX, e.clientY);
-      e.preventDefault();
-      return;
-    }
+    // 参考图工具: 由画布容器层统一处理 (覆盖整个视口), 这里不处理
+    if (this.tool === 'reference') return;
     var cell = this.getCellFromEvent(e);
     if (!cell) return;
     this.isDragging = true;
@@ -1956,6 +2048,7 @@
         case 'eyedropper': this.eyedropCell(cell.x, cell.y); break;
         case 'eraser': this.beginStroke(); this.eraseCell(cell.x, cell.y); break;
         case 'fill': this.beginStroke(); this.fillCell(cell.x, cell.y); this.endStroke(); break;
+        case 'unlock': this.beginStroke(); this.unlockCell(cell.x, cell.y); break;
       }
     }
   };
@@ -1963,6 +2056,8 @@
   BeadTool.prototype.handleMouseMove = function (e) {
     if (this._suppressMouseUntil && Date.now() < this._suppressMouseUntil) return;
     if (!this.grid) return;
+    // 参考图工具由容器层处理 (这里只处理画布相关手势)
+    if (this.tool === 'reference') return;
     // 平移中: 更新画布位置
     if (this.isPanning) {
       var dx = e.clientX - this.panStartX;
@@ -1971,11 +2066,6 @@
       this.panY = this.panOriginY + dy;
       this.clampPan();
       this.applyCanvasTransform();
-      return;
-    }
-    // 参考图工具: 左键拖动 = 移动参考图
-    if (this.tool === 'reference' && this.isRefMoving) {
-      this.refMoveTo(e.clientX, e.clientY);
       return;
     }
     // 移动工具下不显示填色高亮 / 坐标
@@ -1999,6 +2089,7 @@
       if (idx !== this.lastPaintedIdx) {
         if (this.tool === 'paint') { this.paintCell(cell.x, cell.y); this.lastPaintedIdx = idx; }
         else if (this.tool === 'eraser') { this.eraseCell(cell.x, cell.y); this.lastPaintedIdx = idx; }
+        else if (this.tool === 'unlock') { this.unlockCell(cell.x, cell.y); this.lastPaintedIdx = idx; }
       }
     }
     if (changed || this.isDragging) this.renderGrid();
@@ -2040,6 +2131,16 @@
       return true;
     }
     return false;
+  };
+
+  // 解锁单个格子: 仅解除锁定状态, 保留颜色与完成状态 (配合 beginStroke/endStroke 进入撤销历史)
+  BeadTool.prototype.unlockCell = function (x, y) {
+    var idx = y * this.grid.width + x;
+    if (this.grid.locks[idx] !== 1) return false;  // 未锁定, 无需处理
+    this._strokeChanged = true;
+    this.grid.locks[idx] = 0;
+    this.renderGrid();
+    return true;
   };
 
   BeadTool.prototype.eyedropCell = function (x, y) {

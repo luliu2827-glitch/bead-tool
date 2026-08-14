@@ -88,10 +88,11 @@
 
         <!-- 工具 -->
         <section class="panel aux-panel">
-          <h2>工具 <span style="font-weight:400;color:var(--text-muted);font-size:11px;text-transform:none">画笔 · 橡皮 · 移动 · 吸管 · 填充</span></h2>
+          <h2>工具 <span style="font-weight:400;color:var(--text-muted);font-size:11px;text-transform:none">画笔 · 橡皮 · 解锁 · 移动 · 吸管 · 填充</span></h2>
           <div class="tool-grid">
             <button class="tool-btn active" data-tool="paint" title="画笔 (B) — 点击或拖动填色">🖌<span class="tool-label">填色</span></button>
             <button class="tool-btn" data-tool="eraser" title="橡皮擦 (E) — 清除格子颜色与完成状态">🧽<span class="tool-label">橡皮</span></button>
+            <button class="tool-btn" data-tool="unlock" title="解锁 (U) — 点击已锁定格子解除锁定, 保留颜色">🔓<span class="tool-label">解锁</span></button>
             <button class="tool-btn" data-tool="move" title="移动画布 — 鼠标拖动平移画布">✋<span class="tool-label">移动</span></button>
             <button class="tool-btn" data-tool="eyedropper" title="吸管 (I) — 点击格子取色">💧<span class="tool-label">吸色</span></button>
             <button class="tool-btn" data-tool="fill" title="填充 (F) — 批量填充相连同色区域">🪣<span class="tool-label">填充</span></button>
@@ -102,11 +103,12 @@
         <section class="panel aux-panel">
           <h2>制作模式 <span class="panel-tag">电子拼豆</span></h2>
           <button class="make-btn" id="toggle-lock-filled" title="一次性批量锁定：仅锁定当前已填且未锁定的格子；新填的格子不会自动锁定，再次点击才锁定新填的">🔒 锁定已填充</button>
+          <button class="make-btn" id="btn-unlock-by-color" title="按颜色解锁：一次解除所有「已锁定且颜色等于当前选中颜色」的格子（保留颜色）">🔓 按颜色解锁</button>
           <label class="make-toggle">
             <input type="checkbox" id="toggle-highlight-current">
             <span>✨ 高亮当前颜色</span>
           </label>
-          <p class="make-hint">点击「锁定已填充」只锁定当前已填的格子（逐格保护，读取/吸色不受影响）；新填格子不会自动锁定，需再次点击才锁定。高亮会突出当前颜色的格子。</p>
+          <p class="make-hint">「锁定已填充」只锁当前已填的格子；「解锁」工具可单格解除锁定（保留颜色）；「按颜色解锁」用当前选中颜色批量解锁。新填格子不会自动锁定。</p>
         </section>
 
         <!-- 拼豆板颜色 (需求七) -->
@@ -234,6 +236,7 @@
             <span class="tb-group-title">拼豆编辑</span>
             <button class="tool-btn tb-tool active" data-tool="paint" title="填色 (点击 / 拖动填色)"><span class="tool-ico">🖌</span><span class="tool-text">填色</span></button>
             <button class="tool-btn tb-tool" data-tool="eraser" title="橡皮擦 (清除格子颜色与完成状态)"><span class="tool-ico">🧽</span><span class="tool-text">橡皮</span></button>
+            <button class="tool-btn tb-tool" data-tool="unlock" title="解锁 (点击已锁定格子解除锁定, 保留颜色)"><span class="tool-ico">🔓</span><span class="tool-text">解锁</span></button>
             <button class="tool-btn tb-tool" data-tool="move" title="移动画布 (鼠标拖动 / 双指平移)"><span class="tool-ico">✋</span><span class="tool-text">移动</span></button>
             <button class="tool-btn tb-tool" data-tool="eyedropper" title="吸色 (点击格子取色, 自动切回填色)"><span class="tool-ico">💧</span><span class="tool-text">吸色</span></button>
             <button class="tool-btn tb-tool" data-tool="fill" title="填充 (F) 批量填充相连同色区域"><span class="tool-ico">🪣</span><span class="tool-text">填充</span></button>
@@ -275,7 +278,7 @@
           </div>
 
           <span class="spacer"></span>
-          <span class="info hint">分栏/叠加只是参考图两种显示方式 · 编辑功能始终完整 · 双指捏合缩放画布 · 选「参考」工具后单指移/双指缩参考图</span>
+          <span class="info hint">分栏/叠加只是参考图两种显示方式 · 编辑功能始终完整 · 双指捏合缩放画布 · 选「参考」工具后单指移/双指缩参考图 · 「解锁」工具单格解锁 / 「按颜色解锁」批量解锁</span>
         </div>
         <div class="workspace" id="workspace">
           <!-- 参考图片 (左) -->
@@ -304,7 +307,7 @@
           <div class="splitter hidden" id="splitter" title="拖动调整参考图与画布的比例"></div>
           <!-- 电子拼豆画布 (右) -->
           <div class="canvas-pane">
-            <div class="canvas-container">
+            <div class="canvas-container" id="canvas-container">
               <canvas id="grid-canvas"></canvas>
               <div id="canvas-empty" class="canvas-empty">
                 <div class="icon">🫧</div>

@@ -662,6 +662,7 @@ body {
   overflow: hidden;
   position: relative;
   background-color: #fafafc;
+  touch-action: none;
 }
 
 #grid-canvas {
@@ -687,6 +688,10 @@ body {
 }
 
 #grid-canvas.tool-fill {
+  cursor: pointer;
+}
+
+#grid-canvas.tool-unlock {
   cursor: pointer;
 }
 

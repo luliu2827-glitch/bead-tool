@@ -549,46 +549,70 @@ bt.selectTool('reference');
 eq('可选择 reference 工具', bt.tool, 'reference');
 bt.selectTool('paint');
 
-// 参考图移动 (叠加模式, 网格锚定): 只改 refCellX/Y, 不动画布/格子
+// 参考图移动 (独立图层, workspace 坐标): 只改 refX/refY, 不动画布/格子
 resetGrid();
 bt.overlayMode = true; bt.cellSize = 30; bt.panX = 10; bt.panY = 20;
 bt.referenceImage = { naturalWidth: 100, naturalHeight: 100 };
 bt.refImgW = 100; bt.refImgH = 100;
-bt.refPerCell = 10; bt.refCellX = 0; bt.refCellY = 0; bt.refScaleExtra = 1;
+bt.refX = 0; bt.refY = 0; bt.refScale = 1;
 bt.refDragStartX = 0; bt.refDragStartY = 0;
 bt.refMoveTo(60, 30);
-ok('refMoveTo(叠加) 更新 refCellX = dx/cellSize (≈2)', Math.abs(bt.refCellX - 2) < 1e-6);
-ok('refMoveTo(叠加) 更新 refCellY = dy/cellSize (≈1)', Math.abs(bt.refCellY - 1) < 1e-6);
+eq('refMoveTo 更新 refX (+60)', bt.refX, 60);
+eq('refMoveTo 更新 refY (+30)', bt.refY, 30);
 eq('参考图移动不影响画布 panX', bt.panX, 10);
 eq('参考图移动不影响画布 panY', bt.panY, 20);
+eq('参考图移动不影响画布 cellSize', bt.cellSize, 30);
 ok('参考图移动不改格子', bt.grid.cells.every(function (c) { return c === -1; }));
 
-// 参考图缩放 (叠加模式, 网格锚定): 只改 refScaleExtra, 不动画布/格子
-bt.refScaleExtra = 1; bt.refBaseScale = 1; bt._refPinchDist = 1; bt.refCellX = 0; bt.refCellY = 0; bt.refPerCell = 10;
-bt.refPinchTo(100, 100, 2);
-ok('refPinchTo(叠加) 缩放参考图额外系数 (refScaleExtra≈2)', Math.abs(bt.refScaleExtra - 2) < 1e-6);
+// 参考图缩放 (独立图层): 只改 refScale/refX/refY, 不动画布
+bt.refScale = 1; bt.refX = 0; bt.refY = 0; bt.refBaseScale = 1; bt._refPinchDist = 1;
+bt.refPinchTo(400, 300, 2);
+ok('refPinchTo 缩放参考图 (refScale≈2)', Math.abs(bt.refScale - 2) < 1e-6);
 eq('参考图缩放不影响画布 cellSize', bt.cellSize, 30);
 ok('参考图缩放不改格子', bt.grid.cells.every(function (c) { return c === -1; }));
 
-// 一键对齐画布: 1:1 锚定网格 (refPerCell=refImgW/grid.width) + 不改画布 pan/zoom
+// 一键对齐画布 (一次性 contain+居中): 不改画布
 resetGrid();
-bt.cellSize = 30; bt.panX = 10; bt.panY = 20;
+bt.overlayMode = true;
 bt.referenceImage = { naturalWidth: 100, naturalHeight: 100 };
 bt.refImgW = 100; bt.refImgH = 100;
+bt.canvas.getBoundingClientRect = function () { return { left: 100, top: 50, width: 800, height: 600, right: 900, bottom: 650 }; };
+byId['workspace'].getBoundingClientRect = function () { return { left: 0, top: 0, width: 1000, height: 700, right: 1000, bottom: 700 }; };
+bt.cellSize = 30; bt.panX = 10; bt.panY = 20;
 bt.alignReferenceToCanvas();
-// refPerCell = 100/8 = 12.5; 叠加下 refScale = cellSize/refPerCell = 30/12.5 = 2.4; refCellX/Y=0 => refOffset==pan
-ok('对齐: refPerCell = refImgW/grid.width (≈12.5)', Math.abs(bt.refPerCell - 12.5) < 1e-6);
-ok('对齐: refScale≈2.4 (1:1 适配画布范围)', Math.abs(bt.refScale - 2.4) < 1e-6);
-eq('对齐: 参考图左上角对齐格子(0,0) -> refOffsetX==panX', bt.refOffsetX, 10);
-eq('对齐: refOffsetY==panY', bt.refOffsetY, 20);
+ok('对齐: refScale = min(800/100, 600/100) = 6', Math.abs(bt.refScale - 6) < 1e-6);
+eq('对齐: refX 居中 (100 + 400 - 300 = 200)', bt.refX, 200);
+eq('对齐: refY 居中 (50 + 300 - 300 = 50)', bt.refY, 50);
 eq('对齐: 不改画布 cellSize', bt.cellSize, 30);
 eq('对齐: 不改画布 panX', bt.panX, 10);
 eq('对齐: 不改画布 panY', bt.panY, 20);
 
-// 关键(需求四): 画布缩放后, 参考图仍锁定到格子 (像素↔格子对应不漂移)
-bt.cellSize = 40; bt.applyCanvasTransform();
-ok('画布缩放后参考图 refScale 跟随 (40/12.5≈3.2)', Math.abs(bt.refScale - 3.2) < 1e-6);
-eq('画布缩放后参考图左上角仍对齐格子(0,0) (refOffsetX==panX)', bt.refOffsetX, 10);
+// 关键(独立图层): 画布缩放/平移后, 参考图 refX/refY/refScale 保持不变 (不再跟随)
+bt.refScale = 6; bt.refX = 200; bt.refY = 50;
+bt.cellSize = 40; bt.panX = 100; bt.applyCanvasTransform();
+eq('画布缩放后参考图 refScale 不变 (仍 6)', bt.refScale, 6);
+eq('画布平移后参考图 refX 不变 (仍 200)', bt.refX, 200);
+eq('画布平移后参考图 refY 不变 (仍 50)', bt.refY, 50);
+
+// 切换分栏/叠加不重算参考图 (不跳动)
+bt.refX = 123; bt.refY = 45; bt.refScale = 2.5;
+bt.setOverlayMode(false);
+eq('切分栏 refX 保持', bt.refX, 123);
+eq('切分栏 refY 保持', bt.refY, 45);
+eq('切分栏 refScale 保持', bt.refScale, 2.5);
+bt.setOverlayMode(true);
+eq('切回叠加 refX 保持', bt.refX, 123);
+eq('切回叠加 refY 保持', bt.refY, 45);
+eq('切回叠加 refScale 保持', bt.refScale, 2.5);
+
+// clampPan: 画布≤视口时允许自由平移 (不强制居中)
+resetGrid();
+bt.cellSize = 20;
+bt.canvas.parentNode.getBoundingClientRect = function () { return { left: 0, top: 0, width: 1000, height: 700, right: 1000, bottom: 700 }; };
+bt.panX = 300; bt.panY = 200;
+bt.clampPan();
+eq('画布≤视口: 自由平移 panX 不被强制居中', bt.panX, 300);
+eq('画布≤视口: 自由平移 panY 不被强制居中', bt.panY, 200);
 
 // ===========================================================================
 console.log('\n=== RESULT ===');

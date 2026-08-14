@@ -148,15 +148,10 @@
     this.referenceDataUrl = null;  // dataURL, 用于保存
     this.refImgW = 0;
     this.refImgH = 0;
-    this.refScale = 1;             // 参考图视口缩放 (叠加模式由网格参数推导, 分栏模式为可见值)
-    this.refOffsetX = 0;           // 参考图视口平移 (px, 同上)
-    this.refOffsetY = 0;
+    this.refScale = 1;             // 参考图缩放系数 (参考图像素 → workspace 像素)
+    this.refX = 0;                 // 参考图左上角在 workspace 坐标系的 X (px)
+    this.refY = 0;                 // 参考图左上角在 workspace 坐标系的 Y (px)
     this.refOpacity = 1;           // 1 = 100%
-    // 网格锚定模型 (叠加模式): 参考图以"格子坐标"为锚, 随画布缩放/平移一起移动并保持像素↔格子对应
-    this.refCellX = 0;             // 参考图左上角对应的格子 X (浮点)
-    this.refCellY = 0;             // 参考图左上角对应的格子 Y (浮点)
-    this.refPerCell = 1;           // 每个格子对应多少参考图像素 (uniform, 1:1 时 = refImgW/grid.width)
-    this.refScaleExtra = 1;        // 用户额外缩放系数 (叠加模式自由缩放参考图, 默认 1 = 与画布 1:1)
     // 拼豆板颜色 (需求七): 默认白, 可选浅灰 / 自定义
     this.boardColor = '#ffffff';
     this.boardColorMode = 'white'; // 'white' | 'gray' | 'custom'
@@ -168,7 +163,6 @@
     this.overlayMode = true;
     this.isRefMoving = false;       // 参考图工具: 拖动中
     this.isRefPinching = false;     // 参考图工具: 双指缩放中
-    this.refDragOriginX = 0; this.refDragOriginY = 0;
     this.refDragStartX = 0; this.refDragStartY = 0;
     this._refPinchDist = 1; this.refBaseScale = 1;
 
@@ -1059,8 +1053,8 @@
         e.preventDefault();
         var move = function (ev) {
           if (!self.refDragging) return;
-          self.refOffsetX += ev.clientX - self.refLastX;
-          self.refOffsetY += ev.clientY - self.refLastY;
+          self.refX += ev.clientX - self.refLastX;
+          self.refY += ev.clientY - self.refLastY;
           self.refLastX = ev.clientX; self.refLastY = ev.clientY;
           self.applyRefTransform();
         };
@@ -1106,8 +1100,8 @@
           return;
         }
         if (self.refDragging) {
-          self.refOffsetX += e.touches[0].clientX - self.refLastX;
-          self.refOffsetY += e.touches[0].clientY - self.refLastY;
+          self.refX += e.touches[0].clientX - self.refLastX;
+          self.refY += e.touches[0].clientY - self.refLastY;
           self.refLastX = e.touches[0].clientX; self.refLastY = e.touches[0].clientY;
           self.applyRefTransform();
         }
@@ -1242,78 +1236,29 @@
     this.updateRefToggleLabel();
   };
 
-  // 将参考图变换应用到 DOM (叠加模式: 由网格锚定参数推导; 分栏模式: 沿用视口可见值)
+  // 参考图变换: 始终使用 workspace 坐标系, 分栏/叠加一致 (不参与 overlayMode 判断)
   BeadTool.prototype.applyRefTransform = function () {
     var stage = document.getElementById('reference-stage');
     if (!stage) return;
-    if (this.overlayMode && this.referenceImage && this.grid) {
-      this.computeRefViewportTransform();
-    }
     stage.style.transform =
-      'translate(' + this.refOffsetX + 'px,' + this.refOffsetY + 'px) scale(' + this.refScale + ')';
+      'translate(' + this.refX + 'px,' + this.refY + 'px) scale(' + this.refScale + ')';
     var img = document.getElementById('reference-img');
     if (img) img.style.opacity = this.refOpacity;
     var zl = document.getElementById('ref-zoom-level');
     if (zl) zl.textContent = Math.round(this.refScale * 100) + '%';
   };
 
-  // 叠加模式: 由网格锚定参数 + 画布变换推导参考图视口变换 (参考图与格子真正对应, 缩放/平移画布时同步)
-  BeadTool.prototype.computeRefViewportTransform = function () {
-    var vp = document.getElementById('reference-viewport');
-    var container = this.canvas ? this.canvas.parentNode : null;
-    if (!vp || !container) return;
-    var vpRect = vp.getBoundingClientRect();
-    var cRect = container.getBoundingClientRect();
-    // 网格原点(格 0,0 左上角)在参考视口本地坐标中的位置
-    var ax = (cRect.left + this.panX) - vpRect.left;
-    var ay = (cRect.top + this.panY) - vpRect.top;
-    this.refScale = (this.cellSize / this.refPerCell) * this.refScaleExtra;
-    this.refOffsetX = ax + this.refCellX * this.cellSize;
-    this.refOffsetY = ay + this.refCellY * this.cellSize;
-  };
-
-  // 叠加模式: 在屏幕点 (clientX,clientY) 把额外缩放改为 newExtra, 并保持该点下的格子不动 (像素↔格子对应)
-  BeadTool.prototype.refSetScaleAt = function (clientX, clientY, newExtra) {
-    var vp = document.getElementById('reference-viewport');
-    var container = this.canvas ? this.canvas.parentNode : null;
-    if (!vp || !container) return;
-    newExtra = Math.max(0.05, Math.min(20, newExtra));
-    var vpRect = vp.getBoundingClientRect();
-    var cRect = container.getBoundingClientRect();
-    var ax = (cRect.left + this.panX) - vpRect.left;
-    var ay = (cRect.top + this.panY) - vpRect.top;
-    var curScale = (this.cellSize / this.refPerCell) * this.refScaleExtra;
-    var vx = clientX - vpRect.left, vy = clientY - vpRect.top;
-    var ix = (vx - (ax + this.refCellX * this.cellSize)) / curScale;
-    var iy = (vy - (ay + this.refCellY * this.cellSize)) / curScale;
-    var gx = this.refCellX + ix / this.refPerCell;
-    var gy = this.refCellY + iy / this.refPerCell;
-    this.refScaleExtra = newExtra;
-    if (Math.abs(newExtra - 1) < 1e-6) {
-      this.refCellX = gx - (vx - ax) / this.cellSize;
-      this.refCellY = gy - (vy - ay) / this.cellSize;
-    } else {
-      this.refCellX = (vx - ax - gx * this.cellSize * newExtra) / (this.cellSize * (1 - newExtra));
-      this.refCellY = (vy - ay - gy * this.cellSize * newExtra) / (this.cellSize * (1 - newExtra));
-    }
-    this.applyRefTransform();
-  };
-
-  // 以视口内某点为焦点缩放 (叠加模式改额外系数并锁定格子; 分栏模式改视口缩放)
+  // 以 workspace 内某点为焦点缩放参考图 (不依赖 overlayMode, 不改动画布)
   BeadTool.prototype.refZoomAt = function (clientX, clientY, factor) {
-    if (this.overlayMode && this.referenceImage && this.grid) {
-      this.refSetScaleAt(clientX, clientY, this.refScaleExtra * factor);
-      return;
-    }
-    var vp = document.getElementById('reference-viewport');
-    if (!vp) return;
-    var rect = vp.getBoundingClientRect();
+    var ws = document.getElementById('workspace');
+    if (!ws) return;
+    var rect = ws.getBoundingClientRect();
     var cx = clientX - rect.left, cy = clientY - rect.top;
-    var stageX = (cx - this.refOffsetX) / this.refScale;
-    var stageY = (cy - this.refOffsetY) / this.refScale;
-    this.refScale = Math.max(0.1, Math.min(8, this.refScale * factor));
-    this.refOffsetX = cx - stageX * this.refScale;
-    this.refOffsetY = cy - stageY * this.refScale;
+    var stageX = (cx - this.refX) / this.refScale;
+    var stageY = (cy - this.refY) / this.refScale;
+    this.refScale = Math.max(0.02, Math.min(50, this.refScale * factor));
+    this.refX = cx - stageX * this.refScale;
+    this.refY = cy - stageY * this.refScale;
     this.applyRefTransform();
   };
 
@@ -1324,103 +1269,92 @@
     this.refZoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
   };
 
-  // 参考图"适应": 叠加模式 = 1:1 对齐画布; 分栏模式 = 适配视口
+  // 参考图"适应": 适配参考图当前窗口 (叠加=workspace, 分栏=左侧参考面板), 保持宽高比
   BeadTool.prototype.refFitWindow = function () {
-    if (this.overlayMode && this.referenceImage && this.grid) {
-      this.alignReferenceToCanvas();
-      return;
-    }
-    var vp = document.getElementById('reference-viewport');
-    if (!this.referenceImage || !vp) return;
-    var rect = vp.getBoundingClientRect();
-    var s = Math.min(rect.width / this.refImgW, rect.height / this.refImgH) || 1;
-    this.refScale = Math.max(0.1, Math.min(8, s));
-    this.refOffsetX = (rect.width - this.refImgW * this.refScale) / 2;
-    this.refOffsetY = (rect.height - this.refImgH * this.refScale) / 2;
+    if (!this.referenceImage) return;
+    var pane = document.getElementById('reference-pane');
+    var ws = document.getElementById('workspace');
+    if (!pane || !ws) return;
+    var paneRect = pane.getBoundingClientRect();
+    var wsRect = ws.getBoundingClientRect();
+    var ox = paneRect.left - wsRect.left;
+    var oy = paneRect.top - wsRect.top;
+    var s = Math.min(paneRect.width / this.refImgW, paneRect.height / this.refImgH) || 1;
+    this.refScale = Math.max(0.02, Math.min(50, s));
+    this.refX = ox + (paneRect.width - this.refImgW * this.refScale) / 2;
+    this.refY = oy + (paneRect.height - this.refImgH * this.refScale) / 2;
     this.applyRefTransform();
   };
 
-  // 参考图"100%": 叠加模式 = 复位额外缩放(保留位置); 分栏模式 = 复位视口缩放
+  // 参考图"100%": 复位缩放为 1, 居中于参考图当前窗口
   BeadTool.prototype.refReset100 = function () {
-    if (this.overlayMode && this.referenceImage && this.grid) {
-      this.refScaleExtra = 1;
-      this.applyRefTransform();
-      return;
-    }
     if (!this.referenceImage) return;
-    var vp = document.getElementById('reference-viewport');
-    var rect = vp ? vp.getBoundingClientRect() : { width: 0, height: 0 };
+    var pane = document.getElementById('reference-pane');
+    var ws = document.getElementById('workspace');
+    if (!pane || !ws) return;
+    var paneRect = pane.getBoundingClientRect();
+    var wsRect = ws.getBoundingClientRect();
+    var ox = paneRect.left - wsRect.left;
+    var oy = paneRect.top - wsRect.top;
     this.refScale = 1;
-    this.refOffsetX = (rect.width - this.refImgW) / 2;
-    this.refOffsetY = (rect.height - this.refImgH) / 2;
+    this.refX = ox + (paneRect.width - this.refImgW) / 2;
+    this.refY = oy + (paneRect.height - this.refImgH) / 2;
     this.applyRefTransform();
   };
 
   // ========== 参考图叠加 / 对齐 ==========
 
-  // 进入 / 退出叠加模式 (参考图覆盖画布)
+  // 进入 / 退出叠加模式: 只切换显示方式, 不重算参考图变换 (避免切换时跳动)
   BeadTool.prototype.setOverlayMode = function (on) {
     this.overlayMode = !!on;
     var ws = document.querySelector('.workspace');
     if (ws) ws.classList.toggle('overlay-mode', this.overlayMode);
     var btn = document.getElementById('ref-mode-toggle');
     if (btn) btn.textContent = this.overlayMode ? '⬓ 分栏' : '⬓ 叠加';
-    if (this.overlayMode && this.referenceImage) {
-      // 进入叠加时, 若有图纸则对齐到画布范围, 否则适配视口
-      if (this.grid) this.alignReferenceToCanvas();
-      else this.refFitWindow();
-    }
   };
 
-  // 参考图自由移动 (参考图工具 / 视口拖拽共用)
+  // 参考图自由移动 (workspace 坐标, 分栏/叠加一致)
   BeadTool.prototype.refMoveStart = function (cx, cy) {
-    this.refDragOriginX = this.refOffsetX;
-    this.refDragOriginY = this.refOffsetY;
     this.refDragStartX = cx; this.refDragStartY = cy;
   };
   BeadTool.prototype.refMoveTo = function (cx, cy) {
-    if (this.overlayMode && this.referenceImage && this.grid) {
-      // 屏幕位移换算为格子位移 (1 格 = cellSize 屏幕 px), 保持像素↔格子对应
-      this.refCellX += (cx - this.refDragStartX) / this.cellSize;
-      this.refCellY += (cy - this.refDragStartY) / this.cellSize;
-      this.refDragStartX = cx; this.refDragStartY = cy;
-      this.applyRefTransform();
-      return;
-    }
-    this.refOffsetX = this.refDragOriginX + (cx - this.refDragStartX);
-    this.refOffsetY = this.refDragOriginY + (cy - this.refDragStartY);
+    this.refX += (cx - this.refDragStartX);
+    this.refY += (cy - this.refDragStartY);
+    this.refDragStartX = cx; this.refDragStartY = cy;
     this.applyRefTransform();
   };
 
-  // 参考图双指捏合缩放 (叠加模式锁定格子; 分栏模式原始视口缩放)
+  // 参考图双指捏合缩放 (workspace 坐标, 分栏/叠加一致)
   BeadTool.prototype.refPinchStart = function (midX, midY, dist) {
-    this.refBaseScale = (this.overlayMode && this.grid) ? this.refScaleExtra : this.refScale;
+    this.refBaseScale = this.refScale;
     this._refPinchDist = dist || 1;
   };
   BeadTool.prototype.refPinchTo = function (midX, midY, dist) {
-    if (this.overlayMode && this.referenceImage && this.grid) {
-      this.refSetScaleAt(midX, midY, this.refBaseScale * (dist / this._refPinchDist));
-      return;
-    }
-    var vp = document.getElementById('reference-viewport');
-    if (!vp) return;
-    var rect = vp.getBoundingClientRect();
+    var ws = document.getElementById('workspace');
+    if (!ws) return;
+    var rect = ws.getBoundingClientRect();
     var cx = midX - rect.left, cy = midY - rect.top;
-    var stageX = (cx - this.refOffsetX) / this.refScale;
-    var stageY = (cy - this.refOffsetY) / this.refScale;
-    var newScale = Math.max(0.05, Math.min(20, this.refBaseScale * (dist / this._refPinchDist)));
+    var stageX = (cx - this.refX) / this.refScale;
+    var stageY = (cy - this.refY) / this.refScale;
+    var newScale = Math.max(0.02, Math.min(50, this.refBaseScale * (dist / this._refPinchDist)));
     this.refScale = newScale;
-    this.refOffsetX = cx - stageX * newScale;
-    this.refOffsetY = cy - stageY * newScale;
+    this.refX = cx - stageX * newScale;
+    this.refY = cy - stageY * newScale;
     this.applyRefTransform();
   };
 
-  // 一键对齐画布: 参考图左上角对应格子 (0,0), 每个格子 = refImgW/grid.width 像素 (1:1, 保持参考图比例), 不改画布
+  // 一键对齐画布 (一次性): 叠加模式下参考图 contain+居中覆盖画布范围; 分栏模式下适配参考面板。不改动画布。
   BeadTool.prototype.alignReferenceToCanvas = function () {
     if (!this.referenceImage) { this.toast('还没有参考图', 'warning'); return; }
-    if (!this.grid) { this.refFitWindow(); return; }
-    this.refPerCell = this.refImgW / this.grid.width;
-    this.refCellX = 0; this.refCellY = 0; this.refScaleExtra = 1;
+    if (!this.grid || !this.overlayMode) { this.refFitWindow(); return; }
+    var ws = document.getElementById('workspace');
+    if (!ws) return;
+    var wsRect = ws.getBoundingClientRect();
+    var cRect = this.canvas.getBoundingClientRect();
+    var s = Math.min(cRect.width / this.refImgW, cRect.height / this.refImgH) || 1;
+    this.refScale = Math.max(0.02, Math.min(50, s));
+    this.refX = (cRect.left - wsRect.left) + cRect.width / 2 - (this.refImgW * this.refScale) / 2;
+    this.refY = (cRect.top - wsRect.top) + cRect.height / 2 - (this.refImgH * this.refScale) / 2;
     this.applyRefTransform();
     this.toast('参考图已对齐画布', 'success');
   };
@@ -1428,7 +1362,7 @@
   BeadTool.prototype.refRemove = function () {
     this.referenceImage = null;
     this.referenceDataUrl = null;
-    this.refScale = 1; this.refOffsetX = 0; this.refOffsetY = 0; this.refOpacity = 1;
+    this.refScale = 1; this.refX = 0; this.refY = 0; this.refOpacity = 1;
     var img = document.getElementById('reference-img');
     if (img) { img.src = ''; img.style.display = 'none'; }
     var pane = document.getElementById('reference-pane');
@@ -1481,7 +1415,7 @@
     el.textContent = name ? ('参考图: ' + name) : '未上传参考图';
   };
 
-  // 从存档恢复参考图 (opts: opacity/perCell/cellX/cellY/scaleExtra/imgW/imgH; 旧档回退视口模型)
+  // 从存档恢复参考图 (新档 refX/refY/refScale; 兼容旧档 refOffset 视口模型 / refPerCell 网格锚定模型)
   BeadTool.prototype.restoreReference = function (dataUrl, opts) {
     opts = opts || {};
     var self = this;
@@ -1492,18 +1426,15 @@
       self.refImgW = img.naturalWidth;
       self.refImgH = img.naturalHeight;
       self.refOpacity = (opts.opacity == null ? 1 : opts.opacity);
-      // 网格锚定参数 (优先), 否则回退到旧版视口缩放/平移
-      if (opts.perCell != null) {
-        self.refPerCell = opts.perCell;
-        self.refCellX = (opts.cellX == null ? 0 : opts.cellX);
-        self.refCellY = (opts.cellY == null ? 0 : opts.cellY);
-        self.refScaleExtra = (opts.scaleExtra == null ? 1 : opts.scaleExtra);
-      } else {
-        self.refPerCell = (self.grid && self.grid.width) ? self.refImgW / self.grid.width : 1;
-        self.refCellX = 0; self.refCellY = 0; self.refScaleExtra = 1;
+      if (opts.x != null) {                       // 新档: workspace 坐标
         self.refScale = (opts.scale == null ? 1 : opts.scale);
-        self.refOffsetX = (opts.ox == null ? 0 : opts.ox);
-        self.refOffsetY = (opts.oy == null ? 0 : opts.oy);
+        self.refX = opts.x; self.refY = opts.y;
+      } else if (opts.ox != null) {               // 旧视口档 (7f4c8e1)
+        self.refScale = (opts.scale == null ? 1 : opts.scale);
+        self.refX = opts.ox; self.refY = opts.oy;
+      } else {                                    // 旧网格锚定档 (4e401ad) / 空: 适配当前窗口
+        self.refScale = 1; self.refX = 0; self.refY = 0;
+        self.refFitWindow();
       }
       self.showReferencePane();
       document.getElementById('reference-img').src = dataUrl;
@@ -1732,11 +1663,9 @@
     if (!this.canvas) return;
     this.canvas.style.transform = 'translate(' + this.panX + 'px,' + this.panY + 'px)';
     this.canvas.style.transformOrigin = '0 0';
-    // 叠加模式下, 画布平移/缩放后自动同步参考图 (保持像素↔格子对应)
-    if (this.overlayMode && this.referenceImage && this.grid) this.applyRefTransform();
   };
 
-  // 约束平移边界: 保证画布至少可见 minVisible px, 不会完全移出可视区
+  // 约束平移边界: 自由平移, 但保证画布至少 40px 露头, 不会完全移出可视区
   BeadTool.prototype.clampPan = function () {
     if (!this.canvas || !this.grid) return;
     var container = this.canvas.parentNode;
@@ -1747,10 +1676,8 @@
     var canvasW = this.grid.width * this.cellSize;
     var canvasH = this.grid.height * this.cellSize;
     var m = 40; // 至少可见 40px
-    if (canvasW <= cw) this.panX = (cw - canvasW) / 2;
-    else this.panX = Math.max(m - canvasW, Math.min(cw - m, this.panX));
-    if (canvasH <= ch) this.panY = (ch - canvasH) / 2;
-    else this.panY = Math.max(m - canvasH, Math.min(ch - m, this.panY));
+    this.panX = Math.max(m - canvasW, Math.min(cw - m, this.panX));
+    this.panY = Math.max(m - canvasH, Math.min(ch - m, this.panY));
   };
 
   // 以客户端坐标 (clientX/clientY) 为焦点缩放 (鼠标滚轮 / 缩放按钮通用)
@@ -2411,10 +2338,9 @@
       paletteId: this.paletteId,
       referenceDataUrl: this.referenceDataUrl,
       refOpacity: this.refOpacity,
-      refPerCell: this.refPerCell,
-      refCellX: this.refCellX,
-      refCellY: this.refCellY,
-      refScaleExtra: this.refScaleExtra,
+      refScale: this.refScale,
+      refX: this.refX,
+      refY: this.refY,
       refImgW: this.refImgW,
       refImgH: this.refImgH,
       boardColor: this.boardColor,
@@ -2469,15 +2395,14 @@
       if (data.referenceDataUrl) {
         self.restoreReference(data.referenceDataUrl, {
           opacity: data.refOpacity,
-          perCell: data.refPerCell,
-          cellX: data.refCellX,
-          cellY: data.refCellY,
-          scaleExtra: data.refScaleExtra,
+          scale: data.refScale,
+          x: data.refX,
+          y: data.refY,
           imgW: data.refImgW,
           imgH: data.refImgH,
-          scale: data.refScale,
-          ox: data.refOffsetX,
-          oy: data.refOffsetY
+          ox: data.refOffsetX,      // 旧档回退 (视口模型)
+          oy: data.refOffsetY,      // 旧档回退
+          perCell: data.refPerCell  // 旧档回退 (网格锚定模型)
         });
         if (data.boardColor) { self.boardColor = data.boardColor; self.boardColorMode = data.boardColorMode || 'custom'; }
       }

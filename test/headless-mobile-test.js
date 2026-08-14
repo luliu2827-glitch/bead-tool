@@ -158,7 +158,6 @@ const files = [
   'data/palettes/mard-standard.js',
   'data/palettes/mard-full.js',
   'js/palettes.js',
-  'js/xlsx-export.js',
   'js/app.js'
 ];
 const combined = files.map(read).join('\n;\n');
@@ -517,6 +516,60 @@ ok('mousemove handler bound on canvas', !!(canvas._handlers['mousemove'] && canv
 ok('mouseup handler bound on canvas', !!(canvas._handlers['mouseup'] && canvas._handlers['mouseup'].length));
 bt.selectTool('move');
 eq('move tool preserved for desktop', bt.tool, 'move');
+
+// ===========================================================================
+console.log('\n=== (新增) 参考图叠加模式 / 对齐 / 工具路由 / Excel 移除 ===');
+
+// Excel 功能已彻底移除
+ok('exportXLSX 方法已移除', typeof bt.exportXLSX === 'undefined');
+ok('全局 BeadXLSX 模块未加载 (xlsx-export.js 已删)', typeof sandbox.BeadXLSX === 'undefined');
+
+// 默认叠加模式 + 切换
+eq('默认 overlayMode = true', bt.overlayMode, true);
+var modeBtn = byId['ref-mode-toggle'];
+bt.setOverlayMode(false);
+eq('setOverlayMode(false) -> overlayMode=false', bt.overlayMode, false);
+ok('分栏模式按钮文案含 叠加', modeBtn && modeBtn.textContent.indexOf('叠加') !== -1);
+bt.setOverlayMode(true);
+eq('setOverlayMode(true) -> overlayMode=true', bt.overlayMode, true);
+ok('叠加模式按钮文案含 分栏', modeBtn && modeBtn.textContent.indexOf('分栏') !== -1);
+
+// 参考图工具可选中 (第 5 个画布工具)
+bt.selectTool('reference');
+eq('可选择 reference 工具', bt.tool, 'reference');
+bt.selectTool('paint');
+
+// 参考图移动: 只改 refOffset, 不动画布/格子
+resetGrid();
+bt.cellSize = 30; bt.panX = 10; bt.panY = 20;
+bt.refOffsetX = 0; bt.refOffsetY = 0; bt.refDragOriginX = 0; bt.refDragStartX = 0; bt.refDragStartY = 0;
+bt.refMoveTo(50, 12);
+eq('refMoveTo 更新 refOffsetX', bt.refOffsetX, 50);
+eq('refMoveTo 更新 refOffsetY', bt.refOffsetY, 12);
+eq('参考图移动不影响画布 panX', bt.panX, 10);
+eq('参考图移动不影响画布 panY', bt.panY, 20);
+ok('参考图移动不改格子', bt.grid.cells.every(function (c) { return c === -1; }));
+
+// 参考图缩放: 只改 refScale, 不动画布/格子
+bt.refScale = 1; bt.refOffsetX = 0; bt.refOffsetY = 0; bt._refPinchDist = 1; bt.refBaseScale = 1; bt.cellSize = 30;
+bt.refPinchTo(100, 100, 2);
+ok('refPinchTo 缩放参考图 (refScale≈2)', Math.abs(bt.refScale - 2) < 1e-6);
+eq('参考图缩放不影响画布 cellSize', bt.cellSize, 30);
+ok('参考图缩放不改格子', bt.grid.cells.every(function (c) { return c === -1; }));
+
+// 一键对齐画布: 居中 + 适配画布范围 + 保持比例, 不改画布 pan/zoom
+resetGrid();
+bt.cellSize = 30; bt.panX = 10; bt.panY = 20;
+bt.referenceImage = { naturalWidth: 100, naturalHeight: 100 };
+bt.refImgW = 100; bt.refImgH = 100;
+bt.alignReferenceToCanvas();
+// content = 8*30 = 240; s = min(240/100,240/100) = 2.4; 居中 => refOffset == pan
+ok('对齐: refScale≈2.4 (适配画布范围)', Math.abs(bt.refScale - 2.4) < 1e-6);
+eq('对齐: 参考图中心对齐画布中心 (refOffsetX==panX)', bt.refOffsetX, 10);
+eq('对齐: 参考图中心对齐画布中心 (refOffsetY==panY)', bt.refOffsetY, 20);
+eq('对齐: 不改画布 cellSize', bt.cellSize, 30);
+eq('对齐: 不改画布 panX', bt.panX, 10);
+eq('对齐: 不改画布 panY', bt.panY, 20);
 
 // ===========================================================================
 console.log('\n=== RESULT ===');

@@ -1242,6 +1242,55 @@ body {
   overflow: hidden;
 }
 
+/* ===== 参考图叠加模式 (参考图覆盖在拼豆画布之上) ===== */
+/* 命中容器 .workspace.overlay-mode 时生效; 分栏模式不受影响 */
+.workspace.overlay-mode .reference-pane {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  min-width: 0;
+  z-index: 5;
+  background: transparent;
+  border-right: none;
+  pointer-events: none;   /* 空白区域不拦截, 让画布可正常点击/填色 */
+}
+/* 浮动工具条: 始终可点击 (不透明、可交互) */
+.workspace.overlay-mode .reference-toolbar {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  z-index: 7;
+  pointer-events: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  flex-wrap: wrap;
+}
+/* 参考视口铺满画布区域, 但自身不拦截事件 (事件交给画布, 由工具决定) */
+.workspace.overlay-mode .reference-viewport {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+/* 参考图本体不拦截事件 (参考图工具激活时由画布层统一处理移动/缩放) */
+.workspace.overlay-mode .reference-stage,
+.workspace.overlay-mode .reference-viewport > img {
+  pointer-events: none;
+}
+/* 未上传参考图时, 占位区的上传按钮需要可点击 */
+.workspace.overlay-mode .reference-placeholder {
+  pointer-events: auto;
+}
+/* 叠加模式无左右分栏, 隐藏分隔条 */
+.workspace.overlay-mode .splitter {
+  display: none;
+}
+
 /* 侧栏: 参考图片状态 / 说明 */
 .ref-status {
   margin-top: 8px;

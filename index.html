@@ -24,8 +24,7 @@
         <button id="btn-toggle-grid" class="tb-btn active" title="网格线 (G)">⊞ 网格</button>
         <button id="btn-save" class="tb-btn" title="保存到浏览器">💾 保存</button>
         <button id="btn-load" class="tb-btn" title="读取存档">📂 读取</button>
-        <button id="btn-export-png" class="tb-btn" title="导出为PNG图片">🖼️ PNG</button>
-        <button id="btn-export-xlsx" class="tb-btn" title="导出为Excel (含色号)">📊 Excel</button>
+          <button id="btn-export-png" class="tb-btn" title="导出为PNG图片">🖼️ PNG</button>
       </div>
     </header>
 
@@ -217,6 +216,7 @@
             <button class="tool-btn tb-tool" data-tool="eraser" title="橡皮擦 (清除格子颜色与完成状态)"><span class="tool-ico">🧽</span><span class="tool-text">橡皮</span></button>
             <button class="tool-btn tb-tool" data-tool="move" title="移动画布 (鼠标拖动 / 双指平移)"><span class="tool-ico">✋</span><span class="tool-text">移动</span></button>
             <button class="tool-btn tb-tool" data-tool="eyedropper" title="吸色 (点击格子取色, 自动切回填色)"><span class="tool-ico">💧</span><span class="tool-text">吸色</span></button>
+            <button class="tool-btn tb-tool" data-tool="reference" title="参考图工具 (移动/缩放参考图, 不影响拼豆)"><span class="tool-ico">🖼️</span><span class="tool-text">参考</span></button>
           </div>
           <span class="tb-sep"></span>
           <div class="tb-group" title="撤销 / 重做">
@@ -238,7 +238,7 @@
           </div>
           <span class="spacer"></span>
           <button id="btn-toggle-reference" class="tb-btn" title="显示 / 隐藏参考图">🖼️ 隐藏参考图</button>
-          <span class="info hint">🖌填色 · 🧽擦除 · ✋移动(双指可平移) · 💧吸色 · 双指捏合缩放 / 双指拖动平移</span>
+          <span class="info hint">🖌填色 · 🧽擦除 · ✋移动(双指可平移) · 💧吸色 · 🖼️参考(移/缩参考图) · 双指捏合缩放 / 双指拖动平移画布</span>
         </div>
         <div class="workspace">
           <!-- 参考图片 (左) -->
@@ -249,6 +249,8 @@
               <button id="ref-zoom-in" title="放大">+</button>
               <button id="ref-fit" title="适应窗口">适应</button>
               <button id="ref-reset" title="恢复 100%">100%</button>
+              <button id="ref-mode-toggle" title="切换 分栏 / 叠加 显示模式 (叠加: 参考图覆盖在画布上)">⬓ 分栏</button>
+              <button id="ref-align" title="对齐画布: 参考图居中并适配画布范围, 保持宽高比">🎯 对齐画布</button>
               <span class="ref-spacer"></span>
               <label class="ref-opacity-label">透明度
                 <input type="range" id="ref-opacity" min="0" max="100" value="100">
@@ -294,7 +296,6 @@
   <script src="data/palettes/mard-standard.js"></script>
   <script src="data/palettes/mard-full.js"></script>
   <script src="js/palettes.js"></script>
-  <script src="js/xlsx-export.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

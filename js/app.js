@@ -1,6 +1,6 @@
 /**
  * 拼豆电子图纸工具 - 主应用逻辑
- * 功能: 图片导入、像素化、颜色匹配、网格编辑、进度标记、MARD 色卡、Excel 导出
+ * 功能: 图片导入、像素化、颜色匹配、网格编辑、进度标记、MARD 色卡、PNG 导出
  *
  * 设计要点:
  *  - 核心图片匹配算法只依赖 RGB / LAB 颜色距离, 与色卡 ID (A1/A2/...) 无关。
@@ -155,6 +155,14 @@
     this.refDragging = false;
     this.refLastX = 0;
     this.refLastY = 0;
+
+    // 参考图叠加模式 (默认开启: 参考图覆盖在拼豆画布上)
+    this.overlayMode = true;
+    this.isRefMoving = false;       // 参考图工具: 拖动中
+    this.isRefPinching = false;     // 参考图工具: 双指缩放中
+    this.refDragOriginX = 0; this.refDragOriginY = 0;
+    this.refDragStartX = 0; this.refDragStartY = 0;
+    this._refPinchDist = 1; this.refBaseScale = 1;
 
     // 撤销 / 重做
     this.undoStack = [];
@@ -353,6 +361,7 @@
 
     // 更新 UI
     this.updateRefToggleLabel();
+    this.setOverlayMode(this.overlayMode);   // 应用默认叠加模式 (参考图覆盖画布)
     this.updateMakeToggles();
     this.updateUndoRedoButtons();
     this.updateUI();
@@ -732,9 +741,6 @@
     document.getElementById('btn-export-png').addEventListener('click', function () {
       self.exportPNG();
     });
-    document.getElementById('btn-export-xlsx').addEventListener('click', function () {
-      self.exportXLSX();
-    });
 
     // --- 撤销 / 重做 ---
     var undoBtn = document.getElementById('btn-undo');
@@ -781,7 +787,11 @@
     });
     this.canvas.addEventListener('wheel', function (e) {
       e.preventDefault();
-      self.zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+      if (self.tool === 'reference') {
+        self.refZoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+      } else {
+        self.zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+      }
     }, { passive: false });
 
     // 全局 mouseup: 在画布外松开也能结束平移 / 拖画
@@ -795,6 +805,15 @@
       self._touchCount = e.touches.length;
       if (e.touches.length >= 2) self._multiTouch = true;
       if (e.touches.length === 2) {
+        if (self.tool === 'reference') {
+          // 参考图工具: 双指捏合 = 缩放参考图 (不动画布)
+          self.isRefPinching = true; self.touchMoved = true;
+          var rmx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          var rmy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          var rdist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY) || 1;
+          self.refPinchStart(rmx, rmy, rdist);
+          return;
+        }
         self.isPanning = false; self.isDragging = false; self.isPinching = true; self.touchMoved = true;
         var dx = e.touches[0].clientX - e.touches[1].clientX;
         var dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -815,6 +834,10 @@
         self.isPanning = true;
         self.panStartX = t.clientX; self.panStartY = t.clientY;
         self.panOriginX = self.panX; self.panOriginY = self.panY;
+      } else if (self.tool === 'reference') {
+        // 参考图工具: 单指拖动 = 移动参考图 (不改格子 / 不动画布)
+        self.isRefMoving = true;
+        self.refMoveStart(t.clientX, t.clientY);
       } else if (self.tool === 'paint' || self.tool === 'eraser') {
         self.isDragging = true; self.dragStartButton = 0; self.lastPaintedIdx = -1;
         self.beginStroke();  // 一次笔画开始 (可能是单击或拖动)
@@ -825,6 +848,16 @@
       e.preventDefault();
       self._touchCount = e.touches.length;
       if (self.isPinching && e.touches.length >= 2) {
+        if (self.isRefPinching) {
+          // 参考图工具: 双指捏合缩放参考图
+          var rdx = e.touches[0].clientX - e.touches[1].clientX;
+          var rdy = e.touches[0].clientY - e.touches[1].clientY;
+          var rdist = Math.hypot(rdx, rdy) || 1;
+          var rmidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          var rmidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          self.refPinchTo(rmidX, rmidY, rdist);
+          return;
+        }
         var dx = e.touches[0].clientX - e.touches[1].clientX;
         var dy = e.touches[0].clientY - e.touches[1].clientY;
         var dist = Math.hypot(dx, dy) || 1;
@@ -855,7 +888,9 @@
         if (Math.abs(t2.clientX - self.touchStartX) > 6 || Math.abs(t2.clientY - self.touchStartY) > 6) {
           self.touchMoved = true;
         }
-        if (self.isDragging && (self.tool === 'paint' || self.tool === 'eraser')) {
+        if (self.isRefMoving && self.tool === 'reference') {
+          self.refMoveTo(t2.clientX, t2.clientY);
+        } else if (self.isDragging && (self.tool === 'paint' || self.tool === 'eraser')) {
           var cell = self.getCellFromClient(t2.clientX, t2.clientY);
           if (cell) {
             var idx = cell.y * self.grid.width + cell.x;
@@ -875,6 +910,8 @@
         if (e.touches.length < 2) { self.isPinching = false; self.touchMoved = true; } else return;
       }
       if (self.isPanning) self.isPanning = false;
+      if (self.isRefMoving) self.isRefMoving = false;
+      if (self.isRefPinching && e.touches.length < 2) self.isRefPinching = false;
       if (self.isDragging && (self.tool === 'paint' || self.tool === 'eraser')) {
         self.isDragging = false; self.lastPaintedIdx = -1; self.dragStartButton = -1;
         self.endStroke();
@@ -965,6 +1002,12 @@
     document.getElementById('ref-hide').addEventListener('click', function () {
       self.toggleReferencePane();
     });
+    document.getElementById('ref-mode-toggle').addEventListener('click', function () {
+      self.setOverlayMode(!self.overlayMode);
+    });
+    document.getElementById('ref-align').addEventListener('click', function () {
+      self.alignReferenceToCanvas();
+    });
     document.getElementById('btn-toggle-reference').addEventListener('click', function () {
       self.toggleReferencePane();
     });
@@ -972,6 +1015,7 @@
     var refVp = document.getElementById('reference-viewport');
     if (refVp) {
       refVp.addEventListener('mousedown', function (e) {
+        if (self.overlayMode) return;   // 叠加模式由画布层统一处理参考图操作
         if (e.target.closest('button, input, label')) return;
         self.refDragging = true;
         self.refLastX = e.clientX; self.refLastY = e.clientY;
@@ -992,11 +1036,13 @@
         document.addEventListener('mouseup', up);
       });
       refVp.addEventListener('wheel', function (e) {
+        if (self.overlayMode) return;
         e.preventDefault();
         self.refZoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
       }, { passive: false });
       // 参考图触摸: 单指拖动平移, 双指捏合缩放 (与画布操作相互独立)
       refVp.addEventListener('touchstart', function (e) {
+        if (self.overlayMode) return;
         if (e.target.closest('button, input, label')) return;
         e.preventDefault();
         if (e.touches.length === 2) {
@@ -1210,6 +1256,75 @@
     this.refOffsetX = (rect.width - this.refImgW) / 2;
     this.refOffsetY = (rect.height - this.refImgH) / 2;
     this.applyRefTransform();
+  };
+
+  // ========== 参考图叠加 / 对齐 ==========
+
+  // 进入 / 退出叠加模式 (参考图覆盖画布)
+  BeadTool.prototype.setOverlayMode = function (on) {
+    this.overlayMode = !!on;
+    var ws = document.querySelector('.workspace');
+    if (ws) ws.classList.toggle('overlay-mode', this.overlayMode);
+    var btn = document.getElementById('ref-mode-toggle');
+    if (btn) btn.textContent = this.overlayMode ? '⬓ 分栏' : '⬓ 叠加';
+    if (this.overlayMode && this.referenceImage) {
+      // 进入叠加时, 若有图纸则对齐到画布范围, 否则适配视口
+      if (this.grid) this.alignReferenceToCanvas();
+      else this.refFitWindow();
+    }
+  };
+
+  // 参考图自由移动 (参考图工具 / 视口拖拽共用)
+  BeadTool.prototype.refMoveStart = function (cx, cy) {
+    this.refDragOriginX = this.refOffsetX;
+    this.refDragOriginY = this.refOffsetY;
+    this.refDragStartX = cx; this.refDragStartY = cy;
+  };
+  BeadTool.prototype.refMoveTo = function (cx, cy) {
+    this.refOffsetX = this.refDragOriginX + (cx - this.refDragStartX);
+    this.refOffsetY = this.refDragOriginY + (cy - this.refDragStartY);
+    this.applyRefTransform();
+  };
+
+  // 参考图双指捏合缩放 (锚定中点, 同步平移, 不改动画布)
+  BeadTool.prototype.refPinchStart = function (midX, midY, dist) {
+    this.refBaseScale = this.refScale;
+    this._refPinchDist = dist || 1;
+  };
+  BeadTool.prototype.refPinchTo = function (midX, midY, dist) {
+    var vp = document.getElementById('reference-viewport');
+    if (!vp) return;
+    var rect = vp.getBoundingClientRect();
+    var cx = midX - rect.left, cy = midY - rect.top;
+    var stageX = (cx - this.refOffsetX) / this.refScale;
+    var stageY = (cy - this.refOffsetY) / this.refScale;
+    var newScale = Math.max(0.05, Math.min(20, this.refBaseScale * (dist / this._refPinchDist)));
+    this.refScale = newScale;
+    this.refOffsetX = cx - stageX * newScale;
+    this.refOffsetY = cy - stageY * newScale;
+    this.applyRefTransform();
+  };
+
+  // 一键对齐画布: 参考图中心对齐画布内容中心, 尺寸适配画布范围, 保持宽高比, 不改画布
+  BeadTool.prototype.alignReferenceToCanvas = function () {
+    if (!this.referenceImage) { this.toast('还没有参考图', 'warning'); return; }
+    var vp = document.getElementById('reference-viewport');
+    var container = this.canvas ? this.canvas.parentNode : null;
+    if (!vp || !container) return;
+    var vpRect = vp.getBoundingClientRect();
+    var cRect = container.getBoundingClientRect();
+    var contentW = this.grid ? this.grid.width * this.cellSize : cRect.width;
+    var contentH = this.grid ? this.grid.height * this.cellSize : cRect.height;
+    var centerX = cRect.left + this.panX + contentW / 2;
+    var centerY = cRect.top + this.panY + contentH / 2;
+    var rx = centerX - vpRect.left;
+    var ry = centerY - vpRect.top;
+    var s = Math.min(contentW / this.refImgW, contentH / this.refImgH) || 1;
+    this.refScale = s;
+    this.refOffsetX = rx - (this.refImgW * s) / 2;
+    this.refOffsetY = ry - (this.refImgH * s) / 2;
+    this.applyRefTransform();
+    if (this.grid) this.toast('参考图已对齐画布', 'success');
   };
 
   BeadTool.prototype.refRemove = function () {
@@ -1784,6 +1899,13 @@
       e.preventDefault();
       return;
     }
+    // 参考图工具: 左键拖动 = 移动参考图 (不填色 / 不动画布)
+    if (this.tool === 'reference') {
+      this.isRefMoving = true;
+      this.refMoveStart(e.clientX, e.clientY);
+      e.preventDefault();
+      return;
+    }
     var cell = this.getCellFromEvent(e);
     if (!cell) return;
     this.isDragging = true;
@@ -1811,6 +1933,11 @@
       this.panY = this.panOriginY + dy;
       this.clampPan();
       this.applyCanvasTransform();
+      return;
+    }
+    // 参考图工具: 左键拖动 = 移动参考图
+    if (this.tool === 'reference' && this.isRefMoving) {
+      this.refMoveTo(e.clientX, e.clientY);
       return;
     }
     // 移动工具下不显示填色高亮 / 坐标
@@ -1842,6 +1969,7 @@
   BeadTool.prototype.handleMouseUp = function () {
     this.isDragging = false; this.lastPaintedIdx = -1; this.dragStartButton = -1;
     this.isPanning = false;
+    this.isRefMoving = false;
     this.endStroke();
   };
 
@@ -2156,71 +2284,6 @@
     link.href = canvas.toDataURL('image/png');
     link.click();
     this.toast('PNG 已导出', 'success');
-  };
-
-  // ========== 导出 Excel ==========
-
-  BeadTool.prototype.exportXLSX = function () {
-    if (!this.grid) { this.toast('没有图纸可导出', 'error'); return; }
-    if (typeof BeadXLSX === 'undefined') { this.toast('Excel 模块未加载', 'error'); return; }
-
-    var self = this;
-    var gw = this.grid.width, gh = this.grid.height;
-
-    // --- Sheet 1: Bead Pattern ---
-    var patternRows = [];
-    for (var y = 0; y < gh; y++) {
-      var row = [];
-      for (var x = 0; x < gw; x++) {
-        var ci = this.grid.cells[y * gw + x];
-        if (ci >= 0) {
-          var c = this.palette[ci];
-          row.push({ v: c.id, bg: c.hex, bold: true, align: 'center' });
-        } else {
-          row.push({ v: '', bg: '#FFFFFF', bold: true, align: 'center' });
-        }
-      }
-      patternRows.push(row);
-    }
-    var cols = [];
-    for (var i = 0; i < gw; i++) cols.push({ width: 5 });
-    var patternSheet = { name: 'Bead Pattern', cols: cols, rowHeight: 30, rows: patternRows };
-
-    // --- Sheet 2: Color Summary ---
-    var counts = this.getColorCounts();
-    var summaryRows = [[
-      { v: 'Color ID', bold: true }, { v: 'Color Name', bold: true },
-      { v: 'HEX', bold: true }, { v: 'Quantity', bold: true }
-    ]];
-    counts.forEach(function (item) {
-      var c = self.palette[item.idx];
-      summaryRows.push([{ v: c.id }, { v: colorName(c) }, { v: c.hex }, { v: item.count }]);
-    });
-    var summarySheet = {
-      name: 'Color Summary',
-      cols: [{ width: 10 }, { width: 18 }, { width: 10 }, { width: 10 }],
-      rows: summaryRows
-    };
-
-    // --- Sheet 3: Color Legend (当前色卡全部颜色) ---
-    var legendRows = [[
-      { v: 'Color ID', bold: true }, { v: 'Color Name', bold: true },
-      { v: 'HEX', bold: true }, { v: 'Preview', bold: true }
-    ]];
-    this.palette.forEach(function (c) {
-      legendRows.push([{ v: c.id }, { v: colorName(c) }, { v: c.hex }, { v: '', bg: c.hex }]);
-    });
-    var legendSheet = {
-      name: 'Color Legend',
-      cols: [{ width: 10 }, { width: 18 }, { width: 10 }, { width: 10 }],
-      rows: legendRows
-    };
-
-    BeadXLSX.download(
-      [patternSheet, summarySheet, legendSheet],
-      'bead-pattern-' + this.paletteId + '-' + Date.now() + '.xlsx'
-    );
-    this.toast('Excel 已导出 (' + gw + 'x' + gh + ', ' + this.paletteMeta.name + ')', 'success');
   };
 
   // ========== 存档 (localStorage) ==========

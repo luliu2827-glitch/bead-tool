@@ -2,6 +2,17 @@
  * 拼豆电子图纸工具 - 主应用逻辑
  * 功能: 图片导入、像素化、颜色匹配、网格编辑、进度标记、MARD 色卡、PNG 导出
  *
+ * ============================================================================
+ *  Electronic Bead Tool v1.0  —  稳定冻结版本
+ *  版本定位: 电子拼豆「辅助」工具（照图/参考填色），不是图片识别工具。
+ *  - 已完成核心功能: 上传参考图、空白画布、电子填色、吸色、橡皮擦、填充、
+ *    撤销/重做、锁定、高亮颜色、MARD 色卡、Canvas/Reference 独立移动缩放、
+ *    参考图透明度、叠加/分栏模式、移动端操作。
+ *  - 暂不包含（已确认不扩展）: 图片识别自动生成数字图纸、Pattern Layer、
+ *    识别结果面板、识别颜色统计。
+ *  - 本版本冻结于 2026-08-18，对应 git 提交 ebacb60；不再新增图片识别类功能。
+ * ============================================================================
+ *
  * 设计要点:
  *  - 核心图片匹配算法只依赖 RGB / LAB 颜色距离, 与色卡 ID (A1/A2/...) 无关。
  *  - 色卡为可插拔模块 (见 js/palettes.js 与 data/palettes/*.js), 新增品牌只需增加
@@ -11,6 +22,9 @@
  */
 (function () {
   'use strict';
+
+  // 版本号（冻结版本，仅供展示/关于信息使用，不参与任何逻辑）
+  var APP_VERSION = '1.0';
 
   // ========== 颜色工具函数 ==========
 
@@ -1924,6 +1938,39 @@
     return { x: x, y: y };
   };
 
+  // 网格分隔线 (显示层): 小格线 + 每 5 格中等线 + 每 10 格主线
+  // 纯渲染逻辑, 不影响 grid 数据 / 填色 / 撤销 / 保存格式 / 颜色系统
+  BeadTool.prototype.drawBeadGridLines = function (ctx, gw, gh, cs) {
+    // 小格线 (每格)
+    ctx.strokeStyle = cs >= 14 ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var lx = 0; lx <= gw; lx++) { var xPos = lx * cs + 0.5; ctx.moveTo(xPos, 0); ctx.lineTo(xPos, gh * cs); }
+    for (var ly = 0; ly <= gh; ly++) { var yPos = ly * cs + 0.5; ctx.moveTo(0, yPos); ctx.lineTo(gw * cs, yPos); }
+    ctx.stroke();
+
+    // 格子足够大时才画中等/主线, 避免密集时杂乱
+    if (cs < 8) return;
+
+    // 中等分隔线 (每 5 格)
+    var mw = Math.max(1.5, cs * 0.04);
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+    ctx.lineWidth = mw;
+    ctx.beginPath();
+    for (var mx = 0; mx <= gw; mx += 5) { var mxPos = mx * cs + mw / 2; ctx.moveTo(mxPos, 0); ctx.lineTo(mxPos, gh * cs); }
+    for (var my = 0; my <= gh; my += 5) { var myPos = my * cs + mw / 2; ctx.moveTo(0, myPos); ctx.lineTo(gw * cs, myPos); }
+    ctx.stroke();
+
+    // 主分隔线 (每 10 格)
+    var bw = Math.max(2, cs * 0.07);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = bw;
+    ctx.beginPath();
+    for (var bx = 0; bx <= gw; bx += 10) { var bxPos = bx * cs + bw / 2; ctx.moveTo(bxPos, 0); ctx.lineTo(bxPos, gh * cs); }
+    for (var by = 0; by <= gh; by += 10) { var byPos = by * cs + bw / 2; ctx.moveTo(0, byPos); ctx.lineTo(gw * cs, byPos); }
+    ctx.stroke();
+  };
+
   BeadTool.prototype.renderGrid = function () {
     if (!this.grid) {
       document.getElementById('canvas-empty').style.display = 'flex';
@@ -2032,23 +2079,9 @@
       }
     }
 
-    // 网格线
+    // 网格线 (3 级分隔: 小格 / 每5格中等 / 每10格主线)
     if (this.showGrid && cs >= 6) {
-      ctx.strokeStyle = cs >= 14 ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.08)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (var lx = 0; lx <= gw; lx++) { var xPos = lx * cs + 0.5; ctx.moveTo(xPos, 0); ctx.lineTo(xPos, gh * cs); }
-      for (var ly = 0; ly <= gh; ly++) { var yPos = ly * cs + 0.5; ctx.moveTo(0, yPos); ctx.lineTo(gw * cs, yPos); }
-      ctx.stroke();
-
-      if (cs >= 8) {
-        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        for (var bx = 0; bx <= gw; bx += 10) { var bxPos = bx * cs + 0.5; ctx.moveTo(bxPos, 0); ctx.lineTo(bxPos, gh * cs); }
-        for (var by = 0; by <= gh; by += 10) { var byPos = by * cs + 0.5; ctx.moveTo(0, byPos); ctx.lineTo(gw * cs, byPos); }
-        ctx.stroke();
-      }
+      this.drawBeadGridLines(ctx, gw, gh, cs);
     }
 
     // hover 高亮
@@ -2462,10 +2495,7 @@
       }
     }
     if (this.showGrid) {
-      ctx.strokeStyle = 'rgba(0,0,0,0.15)'; ctx.lineWidth = 1; ctx.beginPath();
-      for (var lx = 0; lx <= gw; lx++) { ctx.moveTo(lx * cs + 0.5, 0); ctx.lineTo(lx * cs + 0.5, gh * cs); }
-      for (var ly = 0; ly <= gh; ly++) { ctx.moveTo(0, ly * cs + 0.5); ctx.lineTo(gw * cs, ly * cs + 0.5); }
-      ctx.stroke();
+      this.drawBeadGridLines(ctx, gw, gh, cs);
     }
     var link = document.createElement('a');
     link.download = 'bead-pattern-' + this.paletteId + '-' + Date.now() + '.png';

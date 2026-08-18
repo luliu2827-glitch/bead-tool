@@ -734,6 +734,33 @@ ok('叠加参考面板强制 height:auto (窄窗口不裁剪为 40%)',
    overlayRefStart !== -1 && overlayRefCss.indexOf('height: auto') !== -1);
 
 // ===========================================================================
+// ---- 网格 3 级分隔线 (显示层优化, 不改数据/逻辑) ----
+(function () {
+  ok('drawBeadGridLines 方法存在', typeof bt.drawBeadGridLines === 'function');
+  function recCtx() {
+    var calls = { beginPath: 0, moveTo: 0, lineTo: 0, stroke: 0 };
+    return {
+      calls: calls,
+      beginPath: function () { calls.beginPath++; },
+      moveTo: function () { calls.moveTo++; },
+      lineTo: function () { calls.lineTo++; },
+      stroke: function () { calls.stroke++; }
+    };
+  }
+  // 大格 (cs=20): 小格 + 每5中等 + 每10主线 = 3 段
+  var c1 = recCtx();
+  bt.drawBeadGridLines(c1, 29, 29, 20);
+  eq('大格: 3 段 beginPath', c1.calls.beginPath, 3);
+  eq('大格: 3 段 stroke', c1.calls.stroke, 3);
+  eq('大格: moveTo 次数(60小+12中+6主=78)', c1.calls.moveTo, 78);
+
+  // 小格 (cs=6): 仅小格线 (1 段), 不画中等/主线
+  var c2 = recCtx();
+  bt.drawBeadGridLines(c2, 29, 29, 6);
+  eq('小格: 仅 1 段 beginPath', c2.calls.beginPath, 1);
+  eq('小格: moveTo 次数=60', c2.calls.moveTo, 60);
+})();
+
 console.log('\n=== RESULT ===');
 console.log('  PASS: ' + pass + '   FAIL: ' + fail);
 if (fail > 0) {
